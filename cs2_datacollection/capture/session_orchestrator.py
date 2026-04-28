@@ -6,6 +6,7 @@ import keyboard  # pip install keyboard
 import subprocess
 from gsi_server import run_gsi_server, set_session, save_events
 from raw_mouse_capture import RawMouseCapture
+from raw_keyboard_capture import RawKeyboardCapture
 
 def run_session():
     # Generate unique session name
@@ -32,6 +33,14 @@ def run_session():
     capture.start_capture(full_name)
     print("[Session] Raw mouse capture started")
 
+    # Start raw keyboard capture (scoped to CS2 foreground)
+    kbd_capture = RawKeyboardCapture(
+        f"sessions/{full_name}_keyboard",
+        cs2_focus_only=True,
+    )
+    kbd_capture.start_capture(full_name)
+    print("[Session] Raw keyboard capture started")
+
     # Print CS2 commands to run
     print("\n" + "="*50)
     print("NOW IN CS2, run these console commands:")
@@ -46,6 +55,9 @@ def run_session():
 
     # Stop mouse capture
     capture.stop_capture()
+
+    # Stop keyboard capture
+    kbd_capture.stop_capture()
 
     # Save GSI events
     save_events()
