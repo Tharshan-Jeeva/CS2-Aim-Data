@@ -1,0 +1,8 @@
+mode: smooth
+reaction_ms: 20
+tracking_ms: 50
+overshoot_prob: 0.0
+overshoot_deg: 0.0
+jitter_amp_deg: 0.0
+fov_deg: 180
+target_priority: nearest

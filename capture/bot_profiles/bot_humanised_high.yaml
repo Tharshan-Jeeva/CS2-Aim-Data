@@ -1,0 +1,8 @@
+mode: humanised
+reaction_ms: 250
+tracking_ms: 180
+overshoot_prob: 0.4
+overshoot_deg: 4.0
+jitter_amp_deg: 0.8
+fov_deg: 60
+target_priority: closest_to_crosshair

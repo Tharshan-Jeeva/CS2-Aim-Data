@@ -1,3 +1,19 @@
 Assignment Brief/
 docs/
 demos/
+
+# Sessions data (large)
+sessions/*.json
+sessions/*.csv
+sessions/*.png
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+venv/
+.venv/
+
+# Editor
+.vscode/
+.idea/

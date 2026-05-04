@@ -1,0 +1,186 @@
+import math
+import socket
+import struct
+import threading
+import time
+import queue
+from typing import Optional
+
+import numpy as np
+import yaml
+
+
+def angle_delta(from_angle: float, to_angle: float) -> float:
+    delta = to_angle - from_angle
+    while delta > 180.0:
+        delta -= 360.0
+    while delta < -180.0:
+        delta += 360.0
+    return delta
+
+
+def angle_to_target(player_pos: list, player_angles: list, target_pos: list) -> tuple:
+    dx = target_pos[0] - player_pos[0]
+    dy = target_pos[1] - player_pos[1]
+    dz = target_pos[2] - player_pos[2]
+    dist_h = math.sqrt(dx * dx + dy * dy)
+
+    target_yaw = math.degrees(math.atan2(dy, dx))
+    target_pitch = -math.degrees(math.atan2(dz, dist_h))
+
+    return target_yaw, target_pitch
+
+
+def is_in_fov(angular_distance: float, fov_deg: float) -> bool:
+    return angular_distance <= fov_deg / 2.0
+
+
+def select_target(enemies: list, player_pos: list, player_angles: list,
+                  priority: str) -> Optional[dict]:
+    visible = [e for e in enemies if e.get("visible") and e.get("health", 0) > 0]
+    if not visible:
+        return None
+
+    if priority == "nearest":
+        def dist(e):
+            p = e["position"]
+            return math.sqrt(sum((a - b) ** 2 for a, b in zip(player_pos, p)))
+        return min(visible, key=dist)
+
+    elif priority == "closest_to_crosshair":
+        def ang_dist(e):
+            ty, tp = angle_to_target(player_pos, player_angles, e["position"])
+            dy = abs(angle_delta(player_angles[1], ty))
+            dp = abs(angle_delta(player_angles[0], tp))
+            return math.sqrt(dy * dy + dp * dp)
+        return min(visible, key=ang_dist)
+
+    elif priority == "lowest_health":
+        return min(visible, key=lambda e: e["health"])
+
+    return visible[0]
+
+
+class BotAimGenerator:
+
+    def __init__(self, config: dict, udp_host: str = "127.0.0.1",
+                 udp_port: int = 27020):
+        self.config = config
+        self.mode = config["mode"]
+        self.reaction_ms = config["reaction_ms"]
+        self.tracking_ms = config["tracking_ms"]
+        self.overshoot_prob = config.get("overshoot_prob", 0.0)
+        self.overshoot_deg = config.get("overshoot_deg", 0.0)
+        self.jitter_amp_deg = config.get("jitter_amp_deg", 0.0)
+        self.fov_deg = config.get("fov_deg", 180)
+        self.target_priority = config.get("target_priority", "nearest")
+
+        self.udp_host = udp_host
+        self.udp_port = udp_port
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+        self._engagement_start_ms = None
+        self._engagement_start_yaw = 0.0
+        self._engagement_start_pitch = 0.0
+        self._current_target_id = None
+
+    def compute_aim_angles(self, current_yaw: float, current_pitch: float,
+                           target_yaw: float, target_pitch: float,
+                           engagement_time_ms: float) -> tuple:
+        if self.mode == "raw":
+            return (target_yaw, target_pitch)
+
+        elif self.mode == "smooth":
+            t = min(engagement_time_ms / max(self.tracking_ms, 1), 1.0)
+            yaw = current_yaw + angle_delta(current_yaw, target_yaw) * t
+            pitch = current_pitch + angle_delta(current_pitch, target_pitch) * t
+            return (yaw, pitch)
+
+        elif self.mode == "humanised":
+            t = min(engagement_time_ms / max(self.tracking_ms, 1), 1.0)
+            s = 1.0 / (1.0 + math.exp(-12.0 * (t - 0.5)))
+
+            yaw_delta = angle_delta(self._engagement_start_yaw, target_yaw)
+            pitch_delta = angle_delta(self._engagement_start_pitch, target_pitch)
+
+            yaw = self._engagement_start_yaw + yaw_delta * s
+            pitch = self._engagement_start_pitch + pitch_delta * s
+
+            if t > 0.85 and np.random.random() < self.overshoot_prob:
+                overshoot = np.random.uniform(0, self.overshoot_deg)
+                yaw += overshoot * np.sign(yaw_delta)
+
+            if self.jitter_amp_deg > 0:
+                jitter_yaw = np.random.normal(0, self.jitter_amp_deg * 0.5)
+                jitter_pitch = np.random.normal(0, self.jitter_amp_deg * 0.3)
+                yaw += jitter_yaw
+                pitch += jitter_pitch
+
+            return (yaw, pitch)
+
+        return (current_yaw, current_pitch)
+
+    def send_angles(self, yaw: float, pitch: float):
+        data = struct.pack("<ff", yaw, pitch)
+        self._sock.sendto(data, (self.udp_host, self.udp_port))
+
+    def run(self, tick_queue: queue.Queue, stop_event: threading.Event):
+        print(f"[BotAim] Started — mode={self.mode}, fov={self.fov_deg}")
+
+        while not stop_event.is_set():
+            try:
+                tick = tick_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+
+            player_pos = tick.get("position", [0, 0, 0])
+            player_angles = tick.get("view_angles", [0, 0])
+            enemies = tick.get("enemies", [])
+
+            target = select_target(enemies, player_pos, player_angles,
+                                   self.target_priority)
+
+            if target is None:
+                self._engagement_start_ms = None
+                self._current_target_id = None
+                continue
+
+            target_yaw, target_pitch = angle_to_target(
+                player_pos, player_angles, target["position"])
+            angular_dist = math.sqrt(
+                angle_delta(player_angles[1], target_yaw) ** 2 +
+                angle_delta(player_angles[0], target_pitch) ** 2)
+
+            if not is_in_fov(angular_dist, self.fov_deg):
+                self._engagement_start_ms = None
+                self._current_target_id = None
+                continue
+
+            now_ms = time.time() * 1000
+            if self._current_target_id != target["id"]:
+                self._current_target_id = target["id"]
+                self._engagement_start_ms = now_ms
+                self._engagement_start_yaw = player_angles[1]
+                self._engagement_start_pitch = player_angles[0]
+
+            elapsed_ms = now_ms - self._engagement_start_ms
+            actual_reaction = np.random.normal(
+                self.reaction_ms, self.reaction_ms * 0.3) if self.reaction_ms > 0 else 0
+
+            if elapsed_ms < actual_reaction:
+                continue
+
+            engagement_time = elapsed_ms - actual_reaction
+            yaw, pitch = self.compute_aim_angles(
+                self._engagement_start_yaw, self._engagement_start_pitch,
+                target_yaw, target_pitch, engagement_time)
+
+            self.send_angles(yaw, pitch)
+
+        self._sock.close()
+        print("[BotAim] Stopped")
+
+
+def load_config(path: str) -> dict:
+    with open(path, "r") as f:
+        return yaml.safe_load(f)
