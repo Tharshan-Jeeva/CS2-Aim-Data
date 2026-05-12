@@ -1,6 +1,7 @@
 from flask import Flask, request
 import json
 import os
+import logging
 
 
 def create_app(session_name: str, bot_queue=None):
@@ -41,4 +42,5 @@ def save_events(app, output_dir="sessions"):
 
 
 def run_server(app, port=3000):
+    logging.getLogger("werkzeug").setLevel(logging.ERROR)
     app.run(host="127.0.0.1", port=port, threaded=True, use_reloader=False)

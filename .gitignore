@@ -1,6 +1,7 @@
 Assignment Brief/
 docs/
 demos/
+cssource_server/
 
 # Sessions data (large)
 sessions/*.json
@@ -17,3 +18,11 @@ venv/
 # Editor
 .vscode/
 .idea/
+CODEX_HANDOFF.md
+server setup.txt
+SESSION_CHECKLIST.md
+SESSION_CHECKLIST.md
+start_css_server.sh
+/Documents
+listener.py
+send_fake_tick.py

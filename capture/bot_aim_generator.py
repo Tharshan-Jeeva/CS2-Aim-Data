@@ -1,6 +1,5 @@
 import math
 import socket
-import struct
 import threading
 import time
 import queue
@@ -74,15 +73,22 @@ class BotAimGenerator:
         self.jitter_amp_deg = config.get("jitter_amp_deg", 0.0)
         self.fov_deg = config.get("fov_deg", 180)
         self.target_priority = config.get("target_priority", "nearest")
+        self.send_rate_hz = config.get("send_rate_hz", 64)
+        self.target_z_offset = config.get("target_z_offset", -8.0)
 
         self.udp_host = udp_host
         self.udp_port = udp_port
-        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._sock = None
+        self._connected = False
 
         self._engagement_start_ms = None
         self._engagement_start_yaw = 0.0
         self._engagement_start_pitch = 0.0
         self._current_target_id = None
+        self._tick_count = 0
+        self._send_count = 0
+        self._last_status_ms = 0.0
+        self._last_send_ms = 0.0
 
     def compute_aim_angles(self, current_yaw: float, current_pitch: float,
                            target_yaw: float, target_pitch: float,
@@ -121,11 +127,39 @@ class BotAimGenerator:
         return (current_yaw, current_pitch)
 
     def send_angles(self, yaw: float, pitch: float):
-        data = struct.pack("<ff", yaw, pitch)
-        self._sock.sendto(data, (self.udp_host, self.udp_port))
+        if not self._connected:
+            try:
+                self._sock = socket.create_connection(
+                    (self.udp_host, self.udp_port), timeout=1.0)
+                self._sock.settimeout(1.0)
+                self._connected = True
+                print(f"[BotAim] Connected to override at {self.udp_host}:{self.udp_port}")
+            except OSError as exc:
+                self._print_status(f"[BotAim] Override connection failed: {exc}")
+                return
+
+        data = f"{yaw:.4f} {pitch:.4f}\n".encode("ascii")
+        try:
+            self._sock.sendall(data)
+        except OSError as exc:
+            self._print_status(f"[BotAim] Override send failed: {exc}")
+            self._connected = False
+            if self._sock is not None:
+                self._sock.close()
+                self._sock = None
+            return
+        self._send_count += 1
+
+    def _print_status(self, message: str, min_interval_ms: float = 1000.0):
+        now_ms = time.time() * 1000
+        if now_ms - self._last_status_ms >= min_interval_ms:
+            print(message)
+            self._last_status_ms = now_ms
 
     def run(self, tick_queue: queue.Queue, stop_event: threading.Event):
-        print(f"[BotAim] Started — mode={self.mode}, fov={self.fov_deg}")
+        print(
+            f"[BotAim] Started — mode={self.mode}, fov={self.fov_deg}, "
+            f"override={self.udp_host}:{self.udp_port}")
 
         while not stop_event.is_set():
             try:
@@ -133,9 +167,13 @@ class BotAimGenerator:
             except queue.Empty:
                 continue
 
-            player_pos = tick.get("position", [0, 0, 0])
+            self._tick_count += 1
+            player_pos = tick.get("eye_position", tick.get("position", [0, 0, 0]))
             player_angles = tick.get("view_angles", [0, 0])
             enemies = tick.get("enemies", [])
+            visible_enemies = [
+                e for e in enemies if e.get("visible") and e.get("health", 0) > 0
+            ]
 
             target = select_target(enemies, player_pos, player_angles,
                                    self.target_priority)
@@ -143,10 +181,17 @@ class BotAimGenerator:
             if target is None:
                 self._engagement_start_ms = None
                 self._current_target_id = None
+                self._print_status(
+                    "[BotAim] No visible target "
+                    f"(ticks={self._tick_count}, enemies={len(enemies)}, "
+                    f"visible={len(visible_enemies)}, sent={self._send_count})",
+                    min_interval_ms=2000.0)
                 continue
 
+            target_pos = list(target["position"])
+            target_pos[2] += self.target_z_offset
             target_yaw, target_pitch = angle_to_target(
-                player_pos, player_angles, target["position"])
+                player_pos, player_angles, target_pos)
             angular_dist = math.sqrt(
                 angle_delta(player_angles[1], target_yaw) ** 2 +
                 angle_delta(player_angles[0], target_pitch) ** 2)
@@ -154,6 +199,11 @@ class BotAimGenerator:
             if not is_in_fov(angular_dist, self.fov_deg):
                 self._engagement_start_ms = None
                 self._current_target_id = None
+                self._print_status(
+                    "[BotAim] Target outside FOV "
+                    f"(target={target['id']}, angular_dist={angular_dist:.2f}, "
+                    f"fov={self.fov_deg}, sent={self._send_count})",
+                    min_interval_ms=2000.0)
                 continue
 
             now_ms = time.time() * 1000
@@ -162,6 +212,10 @@ class BotAimGenerator:
                 self._engagement_start_ms = now_ms
                 self._engagement_start_yaw = player_angles[1]
                 self._engagement_start_pitch = player_angles[0]
+                print(
+                    "[BotAim] Target acquired "
+                    f"id={target['id']} dist={angular_dist:.2f} "
+                    f"target_yaw={target_yaw:.2f} target_pitch={target_pitch:.2f}")
 
             elapsed_ms = now_ms - self._engagement_start_ms
             actual_reaction = np.random.normal(
@@ -175,10 +229,21 @@ class BotAimGenerator:
                 self._engagement_start_yaw, self._engagement_start_pitch,
                 target_yaw, target_pitch, engagement_time)
 
-            self.send_angles(yaw, pitch)
+            if self.send_rate_hz > 0:
+                min_send_interval_ms = 1000.0 / self.send_rate_hz
+                if now_ms - self._last_send_ms < min_send_interval_ms:
+                    continue
+                self._last_send_ms = now_ms
 
-        self._sock.close()
-        print("[BotAim] Stopped")
+            self.send_angles(yaw, pitch)
+            self._print_status(
+                "[BotAim] Sent aim "
+                f"yaw={yaw:.2f} pitch={pitch:.2f} "
+                f"target={target['id']} sent={self._send_count}")
+
+        if self._sock is not None:
+            self._sock.close()
+        print(f"[BotAim] Stopped (ticks={self._tick_count}, sent={self._send_count})")
 
 
 def load_config(path: str) -> dict:

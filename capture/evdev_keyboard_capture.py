@@ -41,18 +41,84 @@ class EvdevKeyboardCapture:
         self.events = []
         self.start_time_ns = 0
         self._cs_focused = not cs_focus_only
+        self._keyboard_device_path = None
+        self._read_thread = None
+        self._focus_thread = None
+
+    def _device_aliases(self, path: str) -> list:
+        aliases = []
+        by_id_dir = "/dev/input/by-id"
+        try:
+            real_path = os.path.realpath(path)
+            for name in os.listdir(by_id_dir):
+                alias_path = os.path.join(by_id_dir, name)
+                if os.path.realpath(alias_path) == real_path:
+                    aliases.append(name)
+        except OSError:
+            pass
+        return aliases
+
+    def _score_keyboard_candidate(self, name: str, aliases: list) -> int:
+        text = f"{name} {' '.join(aliases)}".lower()
+        score = 0
+        if "event-kbd" in text:
+            score += 100
+        if "keyboard" in text or "kbd" in text:
+            score += 80
+        if "mouse" in text:
+            score -= 100
+        return score
 
     def _find_keyboard_device(self) -> str:
         if self.device_path:
+            try:
+                dev = InputDevice(self.device_path)
+                dev.close()
+            except PermissionError as exc:
+                raise RuntimeError(
+                    f"Cannot read keyboard device {self.device_path}. "
+                    "Add this user to the 'input' group and log out/in."
+                ) from exc
+            except OSError as exc:
+                raise RuntimeError(
+                    f"Cannot open keyboard device {self.device_path}: {exc}"
+                ) from exc
             return self.device_path
-        devices = [InputDevice(path) for path in list_devices()]
-        for dev in devices:
+
+        permission_denied = []
+        candidates = []
+        for path in list_devices():
+            try:
+                dev = InputDevice(path)
+            except PermissionError:
+                permission_denied.append(path)
+                continue
+            except OSError:
+                continue
+
+            name = dev.name
             caps = dev.capabilities(verbose=False)
+            dev.close()
             if ecodes.EV_KEY in caps:
                 keys = caps[ecodes.EV_KEY]
                 if ecodes.KEY_W in keys and ecodes.KEY_A in keys:
-                    return dev.path
-        raise RuntimeError("No keyboard device found. Ensure user is in 'input' group.")
+                    aliases = self._device_aliases(path)
+                    score = self._score_keyboard_candidate(name, aliases)
+                    candidates.append((score, path, name, aliases))
+
+        if candidates:
+            candidates.sort(key=lambda item: item[0], reverse=True)
+            score, path, name, aliases = candidates[0]
+            alias_text = f" aliases={aliases}" if aliases else ""
+            print(f"[KbdCapture] Selected input device: {path} ({name}){alias_text}")
+            return path
+
+        if permission_denied:
+            raise RuntimeError(
+                "Cannot read input devices. Add this user to the 'input' "
+                "group and log out/in before collecting keyboard data."
+            )
+        raise RuntimeError("No keyboard device found.")
 
     def _poll_focus(self):
         while self.running:
@@ -84,16 +150,25 @@ class EvdevKeyboardCapture:
         })
 
     def _read_loop(self):
-        dev = InputDevice(self._find_keyboard_device())
-        for event in dev.read_loop():
-            if not self.running:
-                break
-            if event.type == ecodes.EV_KEY:
-                ts_ns = event.sec * 1_000_000_000 + event.usec * 1000
-                self._process_event(event.code, event.code, event.value, ts_ns)
+        dev = None
+        try:
+            dev = InputDevice(self._keyboard_device_path)
+            for event in dev.read_loop():
+                if not self.running:
+                    break
+                if event.type == ecodes.EV_KEY:
+                    ts_ns = event.sec * 1_000_000_000 + event.usec * 1000
+                    self._process_event(event.code, event.code, event.value, ts_ns)
+        except OSError as exc:
+            if self.running:
+                print(f"[KbdCapture] Input read failed: {exc}")
+        finally:
+            if dev is not None:
+                dev.close()
 
     def start_capture(self, session_label: str = "session"):
         self.session_label = session_label
+        self._keyboard_device_path = self._find_keyboard_device()
         self.running = True
         self.events = []
         self.start_time_ns = time.time_ns()

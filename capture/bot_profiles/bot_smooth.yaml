@@ -6,3 +6,8 @@ overshoot_deg: 0.0
 jitter_amp_deg: 0.0
 fov_deg: 180
 target_priority: nearest
+target_z_offset: -8.0
+send_rate_hz: 64
+
+target_z_offset: -8.0
+send_rate_hz: 64

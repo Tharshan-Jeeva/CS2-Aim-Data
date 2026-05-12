@@ -65,8 +65,13 @@ def run_session():
     kbd = EvdevKeyboardCapture(
         output_file=f"sessions/{session_name}_keyboard",
         cs_focus_only=True)
-    kbd.start_capture(session_name)
-    print("[Session] Keyboard capture started")
+    try:
+        kbd.start_capture(session_name)
+        print("[Session] Keyboard capture started")
+    except RuntimeError as exc:
+        kbd = None
+        print(f"[Session] Keyboard capture unavailable: {exc}")
+        print("[Session] Continuing with telemetry only.")
 
     bot_thread = None
     if is_bot_session(label):
@@ -78,13 +83,13 @@ def run_session():
         bot_thread.start()
         print(f"[Session] Bot aim generator started (mode={config['mode']})")
         print("[Session] In CS:Source console run:")
-        print("          sm_aim_override_active 1")
-        print("          sm_override_target <your_userid>")
+        print("          sm_override_active 1")
+        print("          sm_override_me")
 
     print("\n" + "=" * 50)
     print("In CS:Source console, run:")
     print(f"  record {session_name}")
-    print(f"  sm_telemetry_target <your_userid>")
+    print("  sm_telemetry_me")
     print("=" * 50)
     print("\nPlay your session. Press Ctrl+C when done.\n")
 
@@ -100,7 +105,8 @@ def run_session():
     except KeyboardInterrupt:
         stop_event.set()
 
-    kbd.stop_capture()
+    if kbd is not None:
+        kbd.stop_capture()
     save_events(app)
 
     print(f"\n[Session] Done. Files saved to sessions/")

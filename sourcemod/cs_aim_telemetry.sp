@@ -23,6 +23,7 @@ Handle g_hHeartbeatTimer = INVALID_HANDLE;
 public void OnPluginStart()
 {
     RegAdminCmd("sm_telemetry_target", Cmd_SetTarget, ADMFLAG_ROOT, "Set the player to track");
+    RegConsoleCmd("sm_telemetry_me", Cmd_SetSelfTarget, "Track yourself for aim telemetry");
 
     HookEvent("player_death", Event_PlayerDeath);
     HookEvent("weapon_fire", Event_WeaponFire);
@@ -42,6 +43,42 @@ public void OnPluginEnd()
     }
 }
 
+public void OnClientPutInServer(int client)
+{
+    if (!IsFakeClient(client) && g_iTargetPlayer < 1)
+    {
+        SetTargetPlayer(client, "auto");
+    }
+}
+
+public void OnClientDisconnect(int client)
+{
+    if (client == g_iTargetPlayer)
+    {
+        g_iTargetPlayer = -1;
+        SelectFirstHumanTarget();
+    }
+}
+
+void SelectFirstHumanTarget()
+{
+    for (int i = 1; i <= MaxClients; i++)
+    {
+        if (IsClientInGame(i) && !IsFakeClient(i))
+        {
+            SetTargetPlayer(i, "auto");
+            return;
+        }
+    }
+}
+
+void SetTargetPlayer(int target, const char[] source)
+{
+    g_iTargetPlayer = target;
+    PrintToServer("[Telemetry] Tracking player %N (userid %d, source=%s)",
+        target, GetClientUserId(target), source);
+}
+
 public Action Cmd_SetTarget(int client, int args)
 {
     if (args < 1)
@@ -57,13 +94,26 @@ public Action Cmd_SetTarget(int client, int args)
 
     if (target > 0 && IsClientInGame(target))
     {
-        g_iTargetPlayer = target;
+        SetTargetPlayer(target, "command");
         ReplyToCommand(client, "[Telemetry] Now tracking player %d (userid %d)", target, userid);
     }
     else
     {
         ReplyToCommand(client, "[Telemetry] Invalid userid %d", userid);
     }
+    return Plugin_Handled;
+}
+
+public Action Cmd_SetSelfTarget(int client, int args)
+{
+    if (client <= 0 || !IsClientInGame(client) || IsFakeClient(client))
+    {
+        ReplyToCommand(client, "[Telemetry] This command must be run by a player.");
+        return Plugin_Handled;
+    }
+
+    SetTargetPlayer(client, "self");
+    ReplyToCommand(client, "[Telemetry] Now tracking you (userid %d)", GetClientUserId(client));
     return Plugin_Handled;
 }
 
@@ -85,8 +135,9 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse,
     if (client != g_iTargetPlayer || !IsPlayerAlive(client))
         return Plugin_Continue;
 
-    float pos[3], velocity[3], eyeAngles[3];
+    float pos[3], eyePos[3], velocity[3], eyeAngles[3];
     GetClientAbsOrigin(client, pos);
+    GetClientEyePosition(client, eyePos);
     GetEntPropVector(client, Prop_Data, "m_vecVelocity", velocity);
     GetClientEyeAngles(client, eyeAngles);
 
@@ -117,16 +168,18 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse,
         enemyCount++;
     }
 
-    char json[2048];
+    char json[3072];
     Format(json, sizeof(json),
         "{\"type\":\"tick\",\"tick\":%d,\"timestamp_server\":%.3f,"
     ... "\"player_id\":%d,\"position\":[%.1f,%.1f,%.1f],"
+    ... "\"eye_position\":[%.1f,%.1f,%.1f],"
     ... "\"velocity\":[%.1f,%.1f,%.1f],\"view_angles\":[%.2f,%.2f],"
     ... "\"buttons\":{\"fire\":%d,\"jump\":%d,\"duck\":%d,\"walk\":%d,"
     ... "\"forward\":%d,\"back\":%d,\"left\":%d,\"right\":%d},"
     ... "\"enemies\":[%s]}",
         GetGameTickCount(), GetGameTime(),
         client, pos[0], pos[1], pos[2],
+        eyePos[0], eyePos[1], eyePos[2],
         velocity[0], velocity[1], velocity[2],
         eyeAngles[0], eyeAngles[1],
         (buttons & IN_ATTACK) ? 1 : 0,

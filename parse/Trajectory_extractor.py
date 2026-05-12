@@ -708,7 +708,7 @@ def extract_trajectories_v2(events_path: str, label: int,
             visible_enemies = [e for e in enemies
                               if e.get("visible") and e.get("health", 0) > 0]
             if visible_enemies:
-                player_pos = tick["position"]
+                player_pos = tick.get("eye_position", tick["position"])
                 min_ang = float("inf")
                 for enemy in visible_enemies:
                     epos = enemy["position"]
