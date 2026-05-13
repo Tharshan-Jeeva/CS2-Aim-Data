@@ -8,6 +8,3 @@ fov_deg: 60
 target_priority: closest_to_crosshair
 target_z_offset: -8.0
 send_rate_hz: 64
-
-target_z_offset: -8.0
-send_rate_hz: 64
