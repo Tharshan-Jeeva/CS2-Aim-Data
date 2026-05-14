@@ -74,7 +74,12 @@ class BotAimGenerator:
         self.fov_deg = config.get("fov_deg", 180)
         self.target_priority = config.get("target_priority", "nearest")
         self.send_rate_hz = config.get("send_rate_hz", 64)
-        self.target_z_offset = config.get("target_z_offset", -8.0)
+        self.target_z_offset = config.get("target_z_offset", 0.0)
+        self.prediction_ticks = config.get("prediction_ticks", 1.0)
+        # Degrees added to target_yaw after geometry computation.
+        # Positive = shifts aim LEFT from the player's perspective (counter-clockwise).
+        # Use to compensate for model/eye-position visual offset.
+        self.yaw_offset_deg = config.get("yaw_offset_deg", 0.0)
 
         self.udp_host = udp_host
         self.udp_port = udp_port
@@ -89,6 +94,10 @@ class BotAimGenerator:
         self._send_count = 0
         self._last_status_ms = 0.0
         self._last_send_ms = 0.0
+
+        # Enemy position history for 1-tick-ahead prediction
+        self._enemy_last_pos: dict = {}   # id -> [x, y, z] (raw, no z_offset)
+        self._enemy_last_ts: dict = {}    # id -> server timestamp (seconds)
 
     def compute_aim_angles(self, current_yaw: float, current_pitch: float,
                            target_yaw: float, target_pitch: float,
@@ -170,6 +179,7 @@ class BotAimGenerator:
             self._tick_count += 1
             player_pos = tick.get("eye_position", tick.get("position", [0, 0, 0]))
             player_angles = tick.get("view_angles", [0, 0])
+            server_ts = tick.get("timestamp_server", 0.0)
             enemies = tick.get("enemies", [])
             visible_enemies = [
                 e for e in enemies if e.get("visible") and e.get("health", 0) > 0
@@ -181,6 +191,8 @@ class BotAimGenerator:
             if target is None:
                 self._engagement_start_ms = None
                 self._current_target_id = None
+                self._enemy_last_pos.clear()
+                self._enemy_last_ts.clear()
                 self._print_status(
                     "[BotAim] No visible target "
                     f"(ticks={self._tick_count}, enemies={len(enemies)}, "
@@ -188,10 +200,35 @@ class BotAimGenerator:
                     min_interval_ms=2000.0)
                 continue
 
-            target_pos = list(target["position"])
-            target_pos[2] += self.target_z_offset
+            # Raw position from telemetry (enemy eye position)
+            raw_target_pos = list(target["position"])
+
+            # --- 1-tick-ahead prediction ----------------------------------
+            # The angle we send now will be applied on the NEXT server tick.
+            # Extrapolate the enemy's position forward by 1 tick using their
+            # velocity computed from the last two telemetry samples.
+            target_id = target["id"]
+            last_raw = self._enemy_last_pos.get(target_id)
+            last_ts = self._enemy_last_ts.get(target_id)
+            predicted_pos = raw_target_pos[:]
+            if last_raw is not None and last_ts is not None:
+                dt = server_ts - last_ts
+                if 0.001 < dt < 0.5:   # sane delta: 1 ms – 500 ms
+                    velocity = [(raw_target_pos[i] - last_raw[i]) / dt
+                                for i in range(3)]
+                    predict_s = self.prediction_ticks / 64.0
+                    predicted_pos = [raw_target_pos[i] + velocity[i] * predict_s
+                                     for i in range(3)]
+            self._enemy_last_pos[target_id] = raw_target_pos
+            self._enemy_last_ts[target_id] = server_ts
+            # --------------------------------------------------------------
+
+            target_pos = [predicted_pos[0], predicted_pos[1],
+                          predicted_pos[2] + self.target_z_offset]
+
             target_yaw, target_pitch = angle_to_target(
                 player_pos, player_angles, target_pos)
+            target_yaw += self.yaw_offset_deg
             angular_dist = math.sqrt(
                 angle_delta(player_angles[1], target_yaw) ** 2 +
                 angle_delta(player_angles[0], target_pitch) ** 2)
@@ -229,12 +266,9 @@ class BotAimGenerator:
                 self._engagement_start_yaw, self._engagement_start_pitch,
                 target_yaw, target_pitch, engagement_time)
 
-            if self.send_rate_hz > 0:
-                min_send_interval_ms = 1000.0 / self.send_rate_hz
-                if now_ms - self._last_send_ms < min_send_interval_ms:
-                    continue
-                self._last_send_ms = now_ms
-
+            # No wall-clock throttle: the tick queue is the natural rate limiter.
+            # Sending on every received tick gives the override the freshest
+            # possible angle at each game frame.
             self.send_angles(yaw, pitch)
             self._print_status(
                 "[BotAim] Sent aim "

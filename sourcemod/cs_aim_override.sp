@@ -28,6 +28,12 @@ int g_iPacketCount = 0;
 int g_iApplyCount = 0;
 int g_iConnectionCount = 0;
 
+// Last successfully applied angles — re-used when no new packet arrives this tick
+// so the aim holds position across double-gap ticks instead of releasing.
+float g_fLastYaw = 0.0;
+float g_fLastPitch = 0.0;
+bool g_bHasLast = false;
+
 public void OnPluginStart()
 {
     g_cvActive = CreateConVar("sm_aim_override_active", "0",
@@ -149,6 +155,12 @@ public Action Cmd_SetActive(int client, int args)
     GetCmdArg(1, arg, sizeof(arg));
     bool active = StringToInt(arg) != 0;
     g_cvActive.SetBool(active);
+    if (!active)
+    {
+        // Release the persistent hold so aim returns to player control immediately.
+        g_bHasPending = false;
+        g_bHasLast = false;
+    }
     ReplyToCommand(client, "[AimOverride] Active: %d", active ? 1 : 0);
     return Plugin_Handled;
 }
@@ -157,6 +169,11 @@ public Action Cmd_Toggle(int client, int args)
 {
     bool active = !g_cvActive.BoolValue;
     g_cvActive.SetBool(active);
+    if (!active)
+    {
+        g_bHasPending = false;
+        g_bHasLast = false;
+    }
     ReplyToCommand(client, "[AimOverride] Active: %d", active ? 1 : 0);
     return Plugin_Handled;
 }
@@ -312,26 +329,62 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse,
 {
     if (client != g_iTargetPlayer) return Plugin_Continue;
     if (!g_cvActive.BoolValue) return Plugin_Continue;
-    if (!g_bHasPending) return Plugin_Continue;
+    // Accept either a fresh packet OR a held last angle (bridges double-gap ticks).
+    if (!g_bHasPending && !g_bHasLast) return Plugin_Continue;
+
+    float applyYaw, applyPitch;
+    if (g_bHasPending)
+    {
+        applyYaw = g_fPendingYaw;
+        applyPitch = g_fPendingPitch;
+        // Store so we can re-apply on ticks where no new packet arrives.
+        g_fLastYaw = applyYaw;
+        g_fLastPitch = applyPitch;
+        g_bHasLast = true;
+        g_bHasPending = false;
+        g_iApplyCount++;
+        if (g_iApplyCount <= 5 || g_iApplyCount % 100 == 0)
+        {
+            PrintToServer("[AimOverride] Applied #%d to %N yaw=%.2f pitch=%.2f",
+                g_iApplyCount, client, applyYaw, applyPitch);
+        }
+    }
+    else
+    {
+        // No new packet this tick — hold last known angle.
+        applyYaw = g_fLastYaw;
+        applyPitch = g_fLastPitch;
+    }
+
+    // Punchangle (recoil) compensation.
+    // GetClientEyeAngles() returns base + punchangle.  When we write to the
+    // OnPlayerRunCmd angles parameter, the engine adds punchangle again, so
+    // without compensation the aim is off by punchangle while firing.
+    // Subtracting the current punchangle here makes the final aim land exactly
+    // on the computed target regardless of recoil state.
+    float punchAngle[3];
+    punchAngle[0] = 0.0;
+    punchAngle[1] = 0.0;
+    punchAngle[2] = 0.0;
+    if (HasEntProp(client, Prop_Send, "m_vecPunchAngle"))
+    {
+        GetEntPropVector(client, Prop_Send, "m_vecPunchAngle", punchAngle);
+    }
 
     float newAngles[3];
-    newAngles[0] = g_fPendingPitch;
-    newAngles[1] = g_fPendingYaw;
+    newAngles[0] = applyPitch - punchAngle[0];
+    newAngles[1] = applyYaw   - punchAngle[1];
     newAngles[2] = 0.0;
 
+    // Apply to OnPlayerRunCmd (server-side hit detection).
     angles[0] = newAngles[0];
     angles[1] = newAngles[1];
     angles[2] = newAngles[2];
+
+    // TeleportEntity sends the corrected angles back to the client so the
+    // crosshair visually snaps and GetClientEyeAngles() reflects the override
+    // immediately for the telemetry plugin on the same tick.
     TeleportEntity(client, NULL_VECTOR, newAngles, NULL_VECTOR);
-
-    g_bHasPending = false;
-    g_iApplyCount++;
-
-    if (g_iApplyCount <= 5 || g_iApplyCount % 100 == 0)
-    {
-        PrintToServer("[AimOverride] Applied #%d to %N yaw=%.2f pitch=%.2f",
-            g_iApplyCount, client, newAngles[1], newAngles[0]);
-    }
 
     return Plugin_Changed;
 }

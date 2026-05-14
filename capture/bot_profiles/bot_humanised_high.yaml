@@ -6,5 +6,7 @@ overshoot_deg: 4.0
 jitter_amp_deg: 0.8
 fov_deg: 60
 target_priority: closest_to_crosshair
-target_z_offset: -8.0
+target_z_offset: 0.0
 send_rate_hz: 64
+prediction_ticks: 0.5
+yaw_offset_deg: 2.0

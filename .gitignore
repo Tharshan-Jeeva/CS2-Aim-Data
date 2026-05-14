@@ -26,3 +26,4 @@ start_css_server.sh
 /Documents
 listener.py
 send_fake_tick.py
+/sessions
