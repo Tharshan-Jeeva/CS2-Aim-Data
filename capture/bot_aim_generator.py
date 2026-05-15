@@ -76,9 +76,11 @@ class BotAimGenerator:
         self.send_rate_hz = config.get("send_rate_hz", 64)
         self.target_z_offset = config.get("target_z_offset", 0.0)
         self.prediction_ticks = config.get("prediction_ticks", 1.0)
-        # Degrees added to target_yaw after geometry computation.
-        # Positive = shifts aim LEFT from the player's perspective (counter-clockwise).
-        # Use to compensate for model/eye-position visual offset.
+        # World-space lateral offset applied to target position before angle computation.
+        # Positive = shifts aim point LEFT (from player's perspective).
+        # Scales correctly with distance — use this for head-centre calibration.
+        self.lateral_offset_units = config.get("lateral_offset_units", 0.0)
+        # Fixed angular fine-tune applied after geometry (normally 0.0).
         self.yaw_offset_deg = config.get("yaw_offset_deg", 0.0)
 
         self.udp_host = udp_host
@@ -216,7 +218,7 @@ class BotAimGenerator:
                 if 0.001 < dt < 0.5:   # sane delta: 1 ms – 500 ms
                     velocity = [(raw_target_pos[i] - last_raw[i]) / dt
                                 for i in range(3)]
-                    predict_s = self.prediction_ticks / 64.0
+                    predict_s = self.prediction_ticks * dt
                     predicted_pos = [raw_target_pos[i] + velocity[i] * predict_s
                                      for i in range(3)]
             self._enemy_last_pos[target_id] = raw_target_pos
@@ -225,6 +227,18 @@ class BotAimGenerator:
 
             target_pos = [predicted_pos[0], predicted_pos[1],
                           predicted_pos[2] + self.target_z_offset]
+
+            # Apply world-space lateral offset before computing aim angles so
+            # the correction scales naturally with distance.  Positive = left.
+            if self.lateral_offset_units != 0.0:
+                dx = target_pos[0] - player_pos[0]
+                dy = target_pos[1] - player_pos[1]
+                dist_h = math.sqrt(dx * dx + dy * dy)
+                if dist_h > 0.001:
+                    left_x = -dy / dist_h
+                    left_y = dx / dist_h
+                    target_pos[0] += left_x * self.lateral_offset_units
+                    target_pos[1] += left_y * self.lateral_offset_units
 
             target_yaw, target_pitch = angle_to_target(
                 player_pos, player_angles, target_pos)
