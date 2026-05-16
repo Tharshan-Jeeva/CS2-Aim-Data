@@ -1,12 +1,11 @@
-Assignment Brief/
-docs/
-demos/
+# CS:Source server installation (large binary tree — install via SteamCMD, see SETUP.md)
 cssource_server/
 
-# Sessions data (large)
+# Session data (large — generated at runtime)
 sessions/*.json
 sessions/*.csv
 sessions/*.png
+/sessions
 
 # Python
 __pycache__/
@@ -15,15 +14,18 @@ __pycache__/
 venv/
 .venv/
 
-# Editor
+# Editor / local scratch
 .vscode/
 .idea/
 CODEX_HANDOFF.md
-server setup.txt
-SESSION_CHECKLIST.md
-SESSION_CHECKLIST.md
-start_css_server.sh
 /Documents
+
+# Legacy / unused
+Assignment Brief/
+docs/
+demos/
 listener.py
 send_fake_tick.py
-/sessions
+
+# Claude Code local session data
+.claude/
