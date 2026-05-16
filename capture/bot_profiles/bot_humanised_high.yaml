@@ -1,0 +1,13 @@
+mode: humanised
+reaction_ms: 250
+tracking_ms: 180
+overshoot_prob: 0.4
+overshoot_deg: 4.0
+jitter_amp_deg: 0.8
+fov_deg: 60
+target_priority: closest_to_crosshair
+target_z_offset: 0.0
+send_rate_hz: 64
+prediction_ticks: 1.5
+lateral_offset_units: 5.0
+yaw_offset_deg: 0.0

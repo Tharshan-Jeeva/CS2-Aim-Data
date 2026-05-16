@@ -14,6 +14,7 @@ Output: one JSON file of trajectory sequences ready for the transformer.
 """
 
 import json
+import math
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -620,3 +621,143 @@ if __name__ == "__main__":
         label          = LABEL,
         visualise      = True,
     )
+
+
+# ─��────────────────────────────────��────────────────────────────────────���─────
+# V2: CS:Source events.json-based extraction
+# ───────���─────────��───────────────────────────────────────────────────────────
+
+def _angle_delta_v2(from_a: float, to_a: float) -> float:
+    d = to_a - from_a
+    while d > 180.0:
+        d -= 360.0
+    while d < -180.0:
+        d += 360.0
+    return d
+
+
+def extract_trajectories_v2(events_path: str, label: int,
+                            window_s: float = 2.0,
+                            min_ticks: int = 20) -> list:
+    with open(events_path, "r") as f:
+        events = json.load(f)
+
+    ticks = [e for e in events if e["type"] == "tick"]
+    fires = [e for e in events if e["type"] == "weapon_fire"]
+    kills = [e for e in events if e["type"] == "kill"]
+
+    if not ticks or not fires:
+        return []
+
+    trajectories = []
+
+    for fire in fires:
+        fire_ts = fire["timestamp_server"]
+        window_start = fire_ts - window_s
+
+        window_ticks = [t for t in ticks
+                        if window_start <= t["timestamp_server"] <= fire_ts]
+
+        if len(window_ticks) < min_ticks:
+            continue
+
+        timesteps = []
+        for i, tick in enumerate(window_ticks):
+            step = {}
+            yaw = tick["view_angles"][1]
+            pitch = tick["view_angles"][0]
+
+            if i > 0:
+                prev = window_ticks[i - 1]
+                prev_yaw = prev["view_angles"][1]
+                prev_pitch = prev["view_angles"][0]
+                dt = tick["timestamp_server"] - prev["timestamp_server"]
+
+                dyaw = _angle_delta_v2(prev_yaw, yaw)
+                dpitch = pitch - prev_pitch
+
+                step["dyaw"] = dyaw
+                step["dpitch"] = dpitch
+                step["dt"] = dt
+
+                speed = math.sqrt(dyaw ** 2 + dpitch ** 2)
+                step["view_velocity"] = speed / dt if dt > 0 else 0.0
+            else:
+                step["dyaw"] = 0.0
+                step["dpitch"] = 0.0
+                step["dt"] = 0.0
+                step["view_velocity"] = 0.0
+
+            if i >= 2:
+                prev_vel = timesteps[i - 1].get("view_velocity", 0.0)
+                dt = step["dt"]
+                step["view_acceleration"] = (
+                    (step["view_velocity"] - prev_vel) / dt if dt > 0 else 0.0)
+            else:
+                step["view_acceleration"] = 0.0
+
+            if i >= 3:
+                prev_acc = timesteps[i - 1].get("view_acceleration", 0.0)
+                dt = step["dt"]
+                step["view_jerk"] = (
+                    (step["view_acceleration"] - prev_acc) / dt if dt > 0 else 0.0)
+            else:
+                step["view_jerk"] = 0.0
+
+            enemies = tick.get("enemies", [])
+            visible_enemies = [e for e in enemies
+                              if e.get("visible") and e.get("health", 0) > 0]
+            if visible_enemies:
+                player_pos = tick.get("eye_position", tick["position"])
+                min_ang = float("inf")
+                for enemy in visible_enemies:
+                    epos = enemy["position"]
+                    dx = epos[0] - player_pos[0]
+                    dy = epos[1] - player_pos[1]
+                    dz = epos[2] - player_pos[2]
+                    dist_h = math.sqrt(dx * dx + dy * dy)
+                    t_yaw = math.degrees(math.atan2(dy, dx))
+                    t_pitch = -math.degrees(math.atan2(dz, dist_h))
+                    ang = math.sqrt(
+                        _angle_delta_v2(yaw, t_yaw) ** 2 +
+                        (pitch - t_pitch) ** 2)
+                    min_ang = min(min_ang, ang)
+                step["angular_distance_to_nearest_enemy"] = min_ang
+                step["target_acquired"] = 1 if min_ang < 1.0 else 0
+            else:
+                step["angular_distance_to_nearest_enemy"] = -1.0
+                step["target_acquired"] = 0
+
+            buttons = tick.get("buttons", {})
+            step["fire"] = buttons.get("fire", 0)
+            step["forward"] = buttons.get("forward", 0)
+            step["back"] = buttons.get("back", 0)
+            step["left"] = buttons.get("left", 0)
+            step["right"] = buttons.get("right", 0)
+            step["jump"] = buttons.get("jump", 0)
+            step["duck"] = buttons.get("duck", 0)
+            step["walk"] = buttons.get("walk", 0)
+
+            timesteps.append(step)
+
+        resulted_in_kill = False
+        headshot = 0
+        for kill in kills:
+            if (kill["attacker_id"] == fire["shooter_id"] and
+                0 <= kill["timestamp_server"] - fire_ts <= 0.1):
+                resulted_in_kill = True
+                headshot = kill.get("headshot", 0)
+                break
+
+        trajectories.append({
+            "label": label,
+            "anchor_type": "weapon_fire",
+            "anchor_tick": fire["tick"],
+            "anchor_timestamp": fire_ts,
+            "weapon": fire.get("weapon", "unknown"),
+            "resulted_in_kill": resulted_in_kill,
+            "headshot": headshot,
+            "timesteps": timesteps,
+        })
+
+    return trajectories

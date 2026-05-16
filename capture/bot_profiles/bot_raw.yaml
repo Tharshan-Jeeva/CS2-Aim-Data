@@ -1,0 +1,13 @@
+mode: raw
+reaction_ms: 0
+tracking_ms: 0
+overshoot_prob: 0.0
+overshoot_deg: 0.0
+jitter_amp_deg: 0.0
+fov_deg: 180
+target_priority: nearest
+target_z_offset: 0.0
+send_rate_hz: 64
+prediction_ticks: 0.7
+lateral_offset_units: 2.0
+yaw_offset_deg: 0.0
