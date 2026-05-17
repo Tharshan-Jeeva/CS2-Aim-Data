@@ -32,6 +32,10 @@ ConVar g_cvJitterDeg;
 ConVar g_cvLockMs;
 ConVar g_cvLostGraceMs;
 ConVar g_cvSwitchImprovement;
+ConVar g_cvPredictEnabled;
+ConVar g_cvLeadSeconds;
+ConVar g_cvMaxLeadUnits;
+ConVar g_cvPunchCompensate;
 ConVar g_cvDebug;
 
 bool  g_bActive[MAXPLAYERS + 1];
@@ -79,6 +83,18 @@ public void OnPluginStart()
     g_cvSwitchImprovement = CreateConVar("sm_nativeaim_switch_improvement", "0.90",
         "Candidate must be this fraction of current angular distance to switch",
         FCVAR_NONE, true, 0.1, true, 1.0);
+    g_cvPredictEnabled = CreateConVar("sm_nativeaim_predict_enabled", "1",
+        "Lead moving targets using server-side velocity (0=off, 1=on)",
+        FCVAR_NONE, true, 0.0, true, 1.0);
+    g_cvLeadSeconds = CreateConVar("sm_nativeaim_lead_seconds", "0.010",
+        "Prediction lead in seconds (XY only, ~2 ticks at 100Hz)",
+        FCVAR_NONE, true, 0.0, true, 0.200);
+    g_cvMaxLeadUnits = CreateConVar("sm_nativeaim_max_lead_units", "64.0",
+        "Maximum lead distance in world units (prevents wild overshoot)",
+        FCVAR_NONE, true, 0.0, true, 512.0);
+    g_cvPunchCompensate = CreateConVar("sm_nativeaim_punch_compensate", "1",
+        "Compensate for weapon recoil (punchangle) when applying view angles",
+        FCVAR_NONE, true, 0.0, true, 1.0);
     g_cvDebug = CreateConVar("sm_nativeaim_debug", "0",
         "Print extra debug information",
         FCVAR_NONE, true, 0.0, true, 1.0);
@@ -328,6 +344,27 @@ bool GetAimPoint(int client, int target, float aimPoint[3])
     GetClientEyePosition(target, aimPoint);
     aimPoint[2] += g_cvTargetZOffset.FloatValue;
 
+    // XY velocity-based lead. Z is intentionally NOT predicted: jump/crouch
+    // toggles produce large Z swings that ruin the aim if leaded.
+    if (g_cvPredictEnabled.BoolValue)
+    {
+        float vel[3];
+        GetEntPropVector(target, Prop_Data, "m_vecVelocity", vel);
+        float lead = g_cvLeadSeconds.FloatValue;
+        float dx = vel[0] * lead;
+        float dy = vel[1] * lead;
+        float mag = SquareRoot(dx * dx + dy * dy);
+        float maxLead = g_cvMaxLeadUnits.FloatValue;
+        if (mag > maxLead && mag > 0.001)
+        {
+            float scale = maxLead / mag;
+            dx *= scale;
+            dy *= scale;
+        }
+        aimPoint[0] += dx;
+        aimPoint[1] += dy;
+    }
+
     float lateral = g_cvLateralOffset.FloatValue;
     if (lateral != 0.0)
     {
@@ -560,13 +597,28 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse,
         desiredPitch = ClampPitch(desiredPitch);
     }
 
-    angles[0] = desiredPitch;
-    angles[1] = desiredYaw;
+    // Recoil compensation: GetClientEyeAngles() returns base + punchangle, but
+    // when we write angles[] the engine adds punchangle on top again. Subtract
+    // the current punchangle so the final aim lands exactly on the target
+    // regardless of recoil state (matches cs_aim_override.sp behaviour).
+    float applyPitch = desiredPitch;
+    float applyYaw = desiredYaw;
+    if (g_cvPunchCompensate.BoolValue
+        && HasEntProp(client, Prop_Send, "m_vecPunchAngle"))
+    {
+        float punchAngle[3];
+        GetEntPropVector(client, Prop_Send, "m_vecPunchAngle", punchAngle);
+        applyPitch -= punchAngle[0];
+        applyYaw   -= punchAngle[1];
+    }
+
+    angles[0] = applyPitch;
+    angles[1] = applyYaw;
     angles[2] = 0.0;
 
     float applyAngles[3];
-    applyAngles[0] = desiredPitch;
-    applyAngles[1] = desiredYaw;
+    applyAngles[0] = applyPitch;
+    applyAngles[1] = applyYaw;
     applyAngles[2] = 0.0;
     TeleportEntity(client, NULL_VECTOR, applyAngles, NULL_VECTOR);
 
