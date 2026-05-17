@@ -70,13 +70,13 @@ public void OnPluginStart()
     g_cvJitterDeg = CreateConVar("sm_nativeaim_jitter_deg", "0.12",
         "Humanised mode jitter amplitude in degrees",
         FCVAR_NONE, true, 0.0, true, 5.0);
-    g_cvLockMs = CreateConVar("sm_nativeaim_lock_ms", "250.0",
+    g_cvLockMs = CreateConVar("sm_nativeaim_lock_ms", "100.0",
         "Minimum time on a target before considering switches (ms)",
         FCVAR_NONE, true, 0.0, true, 5000.0);
-    g_cvLostGraceMs = CreateConVar("sm_nativeaim_lost_grace_ms", "250.0",
+    g_cvLostGraceMs = CreateConVar("sm_nativeaim_lost_grace_ms", "150.0",
         "Grace period (ms) before dropping a target that briefly fails visibility",
         FCVAR_NONE, true, 0.0, true, 5000.0);
-    g_cvSwitchImprovement = CreateConVar("sm_nativeaim_switch_improvement", "0.70",
+    g_cvSwitchImprovement = CreateConVar("sm_nativeaim_switch_improvement", "0.90",
         "Candidate must be this fraction of current angular distance to switch",
         FCVAR_NONE, true, 0.1, true, 1.0);
     g_cvDebug = CreateConVar("sm_nativeaim_debug", "0",
@@ -361,11 +361,18 @@ bool IsVisibleToClient(int client, int target, float aimPoint[3])
         RayType_EndPoint, TraceFilter_IgnoreClient, client);
     if (trace == INVALID_HANDLE) return true;
 
-    bool visible = true;
+    // Visible only if the first thing the ray hits IS the target entity.
+    // Hitting world (entity 0/-1), another player, or a prop = blocked.
+    bool visible;
     if (TR_DidHit(trace))
     {
         int hit = TR_GetEntityIndex(trace);
-        visible = (hit == target || hit <= 0);
+        visible = (hit == target);
+    }
+    else
+    {
+        // Clear path to aim point — target is visible.
+        visible = true;
     }
     delete trace;
     return visible;
@@ -452,25 +459,19 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse,
         }
     }
 
-    // Hunt for a candidate. If we have a current target and lock hasn't
-    // elapsed, only allow switching on invalidation, not on a closer crosshair.
-    int candidate = -1;
+    // Always scan for the closest-to-crosshair candidate. Lock window only
+    // gates whether we *switch* to it; the scan itself runs every tick so we
+    // can react instantly when the crosshair moves onto a closer enemy.
     float candidateDist = g_cvFov.FloatValue;
+    int candidate = FindBestTarget(client, currentYaw, currentPitch, eyePos, candidateDist);
     bool locked = keepCurrent && (now - g_flEngageStartTime[client]) < lockSec;
 
-    if (!keepCurrent || !locked)
-    {
-        candidate = FindBestTarget(client, currentYaw, currentPitch, eyePos, candidateDist);
-    }
-
     int chosen = -1;
-    if (keepCurrent && (locked || candidate <= 0))
+    if (keepCurrent && candidate > 0 && candidate != currentTarget)
     {
-        chosen = currentTarget;
-    }
-    else if (keepCurrent && candidate > 0 && candidate != currentTarget)
-    {
-        if (candidateDist < currentDist * switchFrac)
+        // Switch only if locked window has passed AND candidate is meaningfully
+        // closer to the crosshair than the current target.
+        if (!locked && candidateDist < currentDist * switchFrac)
         {
             chosen = candidate;
         }
@@ -478,6 +479,10 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse,
         {
             chosen = currentTarget;
         }
+    }
+    else if (keepCurrent)
+    {
+        chosen = currentTarget;
     }
     else
     {
