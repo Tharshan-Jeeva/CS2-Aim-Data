@@ -8,6 +8,6 @@ fov_deg: 180
 target_priority: nearest
 target_z_offset: 0.0
 send_rate_hz: 64
-prediction_ticks: 0.7
+prediction_ticks: 1.0
 lateral_offset_units: 2.0
 yaw_offset_deg: 0.0

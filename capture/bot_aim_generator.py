@@ -3,6 +3,7 @@ import socket
 import threading
 import time
 import queue
+from collections import deque
 from typing import Optional
 
 import numpy as np
@@ -97,9 +98,8 @@ class BotAimGenerator:
         self._last_status_ms = 0.0
         self._last_send_ms = 0.0
 
-        # Enemy position history for 1-tick-ahead prediction
-        self._enemy_last_pos: dict = {}   # id -> [x, y, z] (raw, no z_offset)
-        self._enemy_last_ts: dict = {}    # id -> server timestamp (seconds)
+        # Rolling position history for smoothed velocity prediction (last 4 samples)
+        self._enemy_history: dict = {}  # id -> deque[(pos, ts), ...] maxlen=4
 
     def compute_aim_angles(self, current_yaw: float, current_pitch: float,
                            target_yaw: float, target_pitch: float,
@@ -193,8 +193,7 @@ class BotAimGenerator:
             if target is None:
                 self._engagement_start_ms = None
                 self._current_target_id = None
-                self._enemy_last_pos.clear()
-                self._enemy_last_ts.clear()
+                self._enemy_history.clear()
                 self._print_status(
                     "[BotAim] No visible target "
                     f"(ticks={self._tick_count}, enemies={len(enemies)}, "
@@ -205,24 +204,35 @@ class BotAimGenerator:
             # Raw position from telemetry (enemy eye position)
             raw_target_pos = list(target["position"])
 
-            # --- 1-tick-ahead prediction ----------------------------------
-            # The angle we send now will be applied on the NEXT server tick.
-            # Extrapolate the enemy's position forward by 1 tick using their
-            # velocity computed from the last two telemetry samples.
+            # --- Rolling-average velocity prediction ---------------------
+            # Keep the last 4 (pos, ts) samples per enemy. Average the
+            # velocity across consecutive pairs so single-frame noise from
+            # strafes or packet jitter doesn't spike the prediction.
             target_id = target["id"]
-            last_raw = self._enemy_last_pos.get(target_id)
-            last_ts = self._enemy_last_ts.get(target_id)
+            history = self._enemy_history.setdefault(
+                target_id, deque(maxlen=4))
+            history.append((raw_target_pos[:], server_ts))
+
             predicted_pos = raw_target_pos[:]
-            if last_raw is not None and last_ts is not None:
-                dt = server_ts - last_ts
-                if 0.001 < dt < 0.5:   # sane delta: 1 ms – 500 ms
-                    velocity = [(raw_target_pos[i] - last_raw[i]) / dt
-                                for i in range(3)]
-                    predict_s = self.prediction_ticks * dt
-                    predicted_pos = [raw_target_pos[i] + velocity[i] * predict_s
-                                     for i in range(3)]
-            self._enemy_last_pos[target_id] = raw_target_pos
-            self._enemy_last_ts[target_id] = server_ts
+            if len(history) >= 2:
+                velocities = []
+                for j in range(1, len(history)):
+                    p_new, t_new = history[j]
+                    p_old, t_old = history[j - 1]
+                    dt = t_new - t_old
+                    if 0.001 < dt < 0.5:
+                        velocities.append(
+                            [(p_new[k] - p_old[k]) / dt for k in range(3)])
+                if velocities:
+                    avg_vel = [
+                        sum(v[k] for v in velocities) / len(velocities)
+                        for k in range(3)]
+                    dt_last = history[-1][1] - history[-2][1]
+                    if 0.001 < dt_last < 0.5:
+                        predict_s = self.prediction_ticks * dt_last
+                        predicted_pos = [
+                            raw_target_pos[k] + avg_vel[k] * predict_s
+                            for k in range(3)]
             # --------------------------------------------------------------
 
             target_pos = [predicted_pos[0], predicted_pos[1],
