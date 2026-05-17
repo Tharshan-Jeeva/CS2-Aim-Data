@@ -12,6 +12,7 @@ from capture.bot_aim_generator import BotAimGenerator, load_config
 
 BOT_LABELS = {"bot_raw", "bot_smooth", "bot_humanised_low",
               "bot_humanised_med", "bot_humanised_high"}
+SM_NATIVE_LABELS = {"sm_native_raw", "sm_native_smooth", "sm_native_humanised_med"}
 PROFILES_DIR = Path(__file__).parent / "bot_profiles"
 
 
@@ -21,6 +22,20 @@ def build_session_name(player_id: str, label: str) -> str:
 
 def is_bot_session(label: str) -> bool:
     return label in BOT_LABELS
+
+
+def is_sm_native_session(label: str) -> bool:
+    return label in SM_NATIVE_LABELS
+
+
+def native_mode_from_label(label: str) -> str:
+    if label == "sm_native_raw":
+        return "raw"
+    if label == "sm_native_smooth":
+        return "smooth"
+    if label == "sm_native_humanised_med":
+        return "humanised"
+    raise ValueError(f"Unknown SM-native label: {label}")
 
 
 def resolve_bot_profile(label: str) -> str:
@@ -37,7 +52,8 @@ def run_session():
         sys.exit(1)
 
     print("\nLabels: human, bot_raw, bot_smooth, bot_humanised_low, "
-          "bot_humanised_med, bot_humanised_high")
+          "bot_humanised_med, bot_humanised_high, "
+          "sm_native_raw, sm_native_smooth, sm_native_humanised_med")
     label = input("Enter label: ").strip()
     if not label:
         print("Error: label required.")
@@ -51,6 +67,7 @@ def run_session():
     print(f"\n[Session] {session_name}")
     print(f"[Session] Label: {label}")
     print(f"[Session] Bot session: {is_bot_session(label)}")
+    print(f"[Session] SM-native session: {is_sm_native_session(label)}")
 
     # maxsize=1: live bot control always reads the freshest tick only.
     # Full telemetry history is still saved by telemetry_server regardless.
@@ -88,6 +105,19 @@ def run_session():
         print("[Session] In CS:Source console run:")
         print("          sm_override_active 1")
         print("          sm_override_me")
+
+    if is_sm_native_session(label):
+        native_mode = native_mode_from_label(label)
+        print("[Session] SourceMod-native aim mode selected.")
+        print("[Session] Python BotAimGenerator is NOT started for this label.")
+        print("[Session] In CS:Source console run:")
+        print(f"          sm_nativeaim_mode {native_mode}")
+        print("          sm_nativeaim_active 0")
+        print('          alias +nativeaim "sm_nativeaim_active 1"')
+        print('          alias -nativeaim "sm_nativeaim_active 0"')
+        print("          bind mouse4 +nativeaim")
+        print("          sm_nativeaim_status")
+        print("          sm_telemetry_me")
 
     print("\n" + "=" * 50)
     print("In CS:Source console, run:")
