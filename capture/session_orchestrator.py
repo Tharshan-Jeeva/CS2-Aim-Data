@@ -52,7 +52,10 @@ def run_session():
     print(f"[Session] Label: {label}")
     print(f"[Session] Bot session: {is_bot_session(label)}")
 
-    bot_queue = queue.Queue() if is_bot_session(label) else None
+    # maxsize=1: live bot control always reads the freshest tick only.
+    # Full telemetry history is still saved by telemetry_server regardless.
+    # A one-item queue prevents a stale tick backlog from causing aim lag / overshoot.
+    bot_queue = queue.Queue(maxsize=1) if is_bot_session(label) else None
     stop_event = threading.Event()
 
     app = create_app(session_name=session_name, bot_queue=bot_queue)

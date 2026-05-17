@@ -141,7 +141,7 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse,
     GetEntPropVector(client, Prop_Data, "m_vecVelocity", velocity);
     GetClientEyeAngles(client, eyeAngles);
 
-    char enemies[1024];
+    char enemies[3072];
     enemies[0] = '\0';
     int enemyCount = 0;
 
@@ -152,23 +152,40 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse,
         if (GetClientTeam(i) == GetClientTeam(client))
             continue;
 
-        float enemyPos[3];
-        GetClientEyePosition(i, enemyPos);
+        float enemyOrigin[3];
+        GetClientAbsOrigin(i, enemyOrigin);
 
-        bool visible = CanSeeTarget(client, enemyPos);
+        // Compute synthetic head-centre aim point.
+        // Origin XY is the true model centre (no facing-direction bias).
+        float enemyAimPoint[3];
+        enemyAimPoint[0] = enemyOrigin[0];
+        enemyAimPoint[1] = enemyOrigin[1];
+        bool isDucking = (GetEntityFlags(i) & FL_DUCKING) != 0;
+        enemyAimPoint[2] = enemyOrigin[2] + (isDucking ? 48.0 : 65.0);
+
+        float enemyVelocity[3];
+        GetEntPropVector(i, Prop_Data, "m_vecVelocity", enemyVelocity);
+
+        bool visible = CanSeeTarget(client, enemyAimPoint);
         int health = GetClientHealth(i);
 
-        char entry[128];
+        // origin = server feet origin; aim_position = computed head centre;
+        // position = aim_position kept for backward compatibility.
+        char entry[384];
         Format(entry, sizeof(entry),
-            "%s{\"id\":%d,\"position\":[%.1f,%.1f,%.1f],\"visible\":%s,\"health\":%d}",
+            "%s{\"id\":%d,\"origin\":[%.1f,%.1f,%.1f],\"aim_position\":[%.1f,%.1f,%.1f],\"position\":[%.1f,%.1f,%.1f],\"velocity\":[%.1f,%.1f,%.1f],\"visible\":%s,\"health\":%d}",
             enemyCount > 0 ? "," : "",
-            i, enemyPos[0], enemyPos[1], enemyPos[2],
+            i,
+            enemyOrigin[0], enemyOrigin[1], enemyOrigin[2],
+            enemyAimPoint[0], enemyAimPoint[1], enemyAimPoint[2],
+            enemyAimPoint[0], enemyAimPoint[1], enemyAimPoint[2],
+            enemyVelocity[0], enemyVelocity[1], enemyVelocity[2],
             visible ? "true" : "false", health);
         StrCat(enemies, sizeof(enemies), entry);
         enemyCount++;
     }
 
-    char json[3072];
+    char json[5120];
     Format(json, sizeof(json),
         "{\"type\":\"tick\",\"tick\":%d,\"timestamp_server\":%.3f,"
     ... "\"player_id\":%d,\"position\":[%.1f,%.1f,%.1f],"

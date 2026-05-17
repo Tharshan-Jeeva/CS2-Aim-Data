@@ -8,6 +8,14 @@ fov_deg: 180
 target_priority: nearest
 target_z_offset: 0.0
 send_rate_hz: 64
-prediction_ticks: 1.0
-lateral_offset_units: 2.0
+lateral_offset_units: 4.0
 yaw_offset_deg: 0.0
+prediction_enabled: false
+prediction_ticks: 0.0
+max_prediction_ticks: 0.35
+max_prediction_seconds: 0.025
+max_prediction_units: 6.0
+max_target_speed_units: 320.0
+velocity_smoothing: 0.35
+follow_gain: 0.55
+enforce_send_rate: false

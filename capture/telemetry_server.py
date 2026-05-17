@@ -1,7 +1,33 @@
+import queue as _queue
 from flask import Flask, request
 import json
 import os
 import logging
+
+
+def put_latest(q: _queue.Queue, item: dict) -> None:
+    """Drain the queue then insert only the newest tick.
+
+    Ensures the bot loop always acts on the freshest game state and
+    never accumulates a backlog of stale frames that would appear as
+    lag or overshoot.
+    """
+    try:
+        while True:
+            q.get_nowait()
+    except _queue.Empty:
+        pass
+    try:
+        q.put_nowait(item)
+    except _queue.Full:
+        try:
+            q.get_nowait()
+        except _queue.Empty:
+            pass
+        try:
+            q.put_nowait(item)
+        except _queue.Full:
+            pass
 
 
 def create_app(session_name: str, bot_queue=None):
@@ -16,10 +42,12 @@ def create_app(session_name: str, bot_queue=None):
         if not data:
             return "OK", 200
 
+        # Always store every event — full history is required for dataset export.
         app.config["EVENTS"].append(data)
 
+        # For live bot control only keep the newest tick; older ticks are discarded.
         if bot_queue and data.get("type") == "tick":
-            bot_queue.put_nowait(data)
+            put_latest(bot_queue, data)
 
         return "OK", 200
 
