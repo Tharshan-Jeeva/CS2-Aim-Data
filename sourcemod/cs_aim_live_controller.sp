@@ -8,7 +8,7 @@
 
 public Plugin myinfo = {
     name = "CS Aim Live Controller",
-    author = "Tzan",
+    author = "Tharshan-Jeeva",
     description = "SourceMod-native low-latency aim controller (raw/smooth/humanised)",
     version = PLUGIN_VERSION,
     url = ""
@@ -18,7 +18,8 @@ enum AimMode
 {
     AimMode_Raw = 0,
     AimMode_Smooth = 1,
-    AimMode_Humanised = 2
+    AimMode_Humanised = 2,
+    AimMode_HumanisedHigh = 3
 };
 
 ConVar g_cvEnable;
@@ -38,6 +39,19 @@ ConVar g_cvMaxLeadUnits;
 ConVar g_cvPunchCompensate;
 ConVar g_cvDebug;
 
+// humanised_high tuning
+ConVar g_cvHHReactionMs;
+ConVar g_cvHHGainFar;
+ConVar g_cvHHGainNear;
+ConVar g_cvHHDecelDeg;
+ConVar g_cvHHJitterMoving;
+ConVar g_cvHHJitterSettled;
+ConVar g_cvHHOvershootProb;
+ConVar g_cvHHOvershootMult;
+ConVar g_cvHHDriftDeg;
+ConVar g_cvHHDriftHz;
+ConVar g_cvHHSettleDeg;
+
 bool  g_bActive[MAXPLAYERS + 1];
 int   g_iMode[MAXPLAYERS + 1];
 int   g_iTarget[MAXPLAYERS + 1];
@@ -50,6 +64,11 @@ float g_flLastAppliedYaw[MAXPLAYERS + 1];
 float g_flLastAppliedPitch[MAXPLAYERS + 1];
 float g_flLastAngularDistance[MAXPLAYERS + 1];
 
+// humanised_high per-client state
+bool  g_bHHOvershootActive[MAXPLAYERS + 1];
+float g_flHHDriftPhaseYaw[MAXPLAYERS + 1];
+float g_flHHDriftPhasePitch[MAXPLAYERS + 1];
+
 public void OnPluginStart()
 {
     g_cvEnable = CreateConVar("sm_nativeaim_enable", "1",
@@ -58,7 +77,7 @@ public void OnPluginStart()
     g_cvFov = CreateConVar("sm_nativeaim_fov", "35.0",
         "Max angular distance (degrees) for target acquisition",
         FCVAR_NONE, true, 1.0, true, 180.0);
-    g_cvTargetZOffset = CreateConVar("sm_nativeaim_target_z_offset", "-12.0",
+    g_cvTargetZOffset = CreateConVar("sm_nativeaim_target_z_offset", "-8.0",
         "Vertical offset from target eye position (negative = lower, toward neck/chest)");
     g_cvLateralOffset = CreateConVar("sm_nativeaim_lateral_offset", "0.0",
         "World-space lateral offset in units (positive = left of aimer's view)");
@@ -83,10 +102,14 @@ public void OnPluginStart()
     g_cvSwitchImprovement = CreateConVar("sm_nativeaim_switch_improvement", "0.90",
         "Candidate must be this fraction of current angular distance to switch",
         FCVAR_NONE, true, 0.1, true, 1.0);
-    g_cvPredictEnabled = CreateConVar("sm_nativeaim_predict_enabled", "1",
+    // Prediction is OFF by default for SM-native: the aim is applied in the
+    // same server tick as the position read, so there is no round-trip latency
+    // to compensate for. Leading only causes overshoot — especially when the
+    // enemy changes direction (the predicted point flips ahead of velocity).
+    g_cvPredictEnabled = CreateConVar("sm_nativeaim_predict_enabled", "0",
         "Lead moving targets using server-side velocity (0=off, 1=on)",
         FCVAR_NONE, true, 0.0, true, 1.0);
-    g_cvLeadSeconds = CreateConVar("sm_nativeaim_lead_seconds", "0.010",
+    g_cvLeadSeconds = CreateConVar("sm_nativeaim_lead_seconds", "0.020",
         "Prediction lead in seconds (XY only, ~2 ticks at 100Hz)",
         FCVAR_NONE, true, 0.0, true, 0.200);
     g_cvMaxLeadUnits = CreateConVar("sm_nativeaim_max_lead_units", "64.0",
@@ -99,10 +122,45 @@ public void OnPluginStart()
         "Print extra debug information",
         FCVAR_NONE, true, 0.0, true, 1.0);
 
+    // ------- humanised_high (very-human) tuning -------
+    g_cvHHReactionMs = CreateConVar("sm_nativeaim_hh_reaction_ms", "170.0",
+        "humanised_high reaction delay before tracking begins (ms)",
+        FCVAR_NONE, true, 0.0, true, 1000.0);
+    g_cvHHGainFar = CreateConVar("sm_nativeaim_hh_gain_far", "0.55",
+        "humanised_high per-tick gain when far from target (flick phase)",
+        FCVAR_NONE, true, 0.0, true, 1.0);
+    g_cvHHGainNear = CreateConVar("sm_nativeaim_hh_gain_near", "0.14",
+        "humanised_high per-tick gain when near target (settle phase)",
+        FCVAR_NONE, true, 0.0, true, 1.0);
+    g_cvHHDecelDeg = CreateConVar("sm_nativeaim_hh_decel_deg", "8.0",
+        "Angular distance (deg) above which gain_far is used; below, blends to gain_near",
+        FCVAR_NONE, true, 0.5, true, 60.0);
+    g_cvHHJitterMoving = CreateConVar("sm_nativeaim_hh_jitter_moving_deg", "0.55",
+        "humanised_high jitter (deg) while crosshair is moving toward target",
+        FCVAR_NONE, true, 0.0, true, 5.0);
+    g_cvHHJitterSettled = CreateConVar("sm_nativeaim_hh_jitter_settled_deg", "0.07",
+        "humanised_high jitter (deg) once crosshair is on target",
+        FCVAR_NONE, true, 0.0, true, 5.0);
+    g_cvHHOvershootProb = CreateConVar("sm_nativeaim_hh_overshoot_prob", "0.35",
+        "Probability the flick overshoots when first acquiring a target",
+        FCVAR_NONE, true, 0.0, true, 1.0);
+    g_cvHHOvershootMult = CreateConVar("sm_nativeaim_hh_overshoot_mult", "1.45",
+        "Gain multiplier while overshoot is active",
+        FCVAR_NONE, true, 1.0, true, 3.0);
+    g_cvHHDriftDeg = CreateConVar("sm_nativeaim_hh_drift_deg", "0.22",
+        "Slow drift amplitude (deg) added when settled on target",
+        FCVAR_NONE, true, 0.0, true, 2.0);
+    g_cvHHDriftHz = CreateConVar("sm_nativeaim_hh_drift_hz", "1.3",
+        "Drift oscillation frequency (Hz)",
+        FCVAR_NONE, true, 0.05, true, 10.0);
+    g_cvHHSettleDeg = CreateConVar("sm_nativeaim_hh_settle_deg", "1.5",
+        "Angular distance (deg) at which the engagement is considered settled (clears overshoot)",
+        FCVAR_NONE, true, 0.1, true, 10.0);
+
     RegConsoleCmd("sm_nativeaim_active", Cmd_SetActive,
         "Enable/disable native aim assist for yourself (0/1)");
     RegConsoleCmd("sm_nativeaim_mode", Cmd_SetMode,
-        "Set native aim mode (raw/smooth/humanised)");
+        "Set native aim mode (raw/smooth/humanised/humanised_high)");
     RegConsoleCmd("sm_nativeaim_status", Cmd_Status,
         "Show native aim status for yourself");
     RegConsoleCmd("sm_nativeaim_me", Cmd_Me,
@@ -137,6 +195,9 @@ void ResetClientState(int client)
     g_flLastAppliedYaw[client] = 0.0;
     g_flLastAppliedPitch[client] = 0.0;
     g_flLastAngularDistance[client] = 0.0;
+    g_bHHOvershootActive[client] = false;
+    g_flHHDriftPhaseYaw[client] = 0.0;
+    g_flHHDriftPhasePitch[client] = 0.0;
 }
 
 // ----------------------------------------------------------------------------
@@ -193,13 +254,19 @@ public Action Cmd_SetMode(int client, int args)
     {
         g_iMode[client] = view_as<int>(AimMode_Smooth);
     }
+    else if (StrEqual(arg, "humanised_high", false)
+          || StrEqual(arg, "humanized_high", false)
+          || StrEqual(arg, "hh", false))
+    {
+        g_iMode[client] = view_as<int>(AimMode_HumanisedHigh);
+    }
     else if (StrEqual(arg, "humanised", false) || StrEqual(arg, "humanized", false))
     {
         g_iMode[client] = view_as<int>(AimMode_Humanised);
     }
     else
     {
-        ReplyToCommand(client, "[NativeAim] Unknown mode '%s' (use raw/smooth/humanised)", arg);
+        ReplyToCommand(client, "[NativeAim] Unknown mode '%s' (use raw/smooth/humanised/humanised_high)", arg);
         return Plugin_Handled;
     }
     // Reset engagement so the new mode starts cleanly.
@@ -268,9 +335,10 @@ public Action Cmd_Me(int client, int args)
 char ModeName_buf[16];
 char[] ModeName(int mode)
 {
-    if (mode == view_as<int>(AimMode_Raw))       strcopy(ModeName_buf, sizeof(ModeName_buf), "raw");
-    else if (mode == view_as<int>(AimMode_Smooth))    strcopy(ModeName_buf, sizeof(ModeName_buf), "smooth");
-    else if (mode == view_as<int>(AimMode_Humanised)) strcopy(ModeName_buf, sizeof(ModeName_buf), "humanised");
+    if (mode == view_as<int>(AimMode_Raw))                 strcopy(ModeName_buf, sizeof(ModeName_buf), "raw");
+    else if (mode == view_as<int>(AimMode_Smooth))         strcopy(ModeName_buf, sizeof(ModeName_buf), "smooth");
+    else if (mode == view_as<int>(AimMode_Humanised))      strcopy(ModeName_buf, sizeof(ModeName_buf), "humanised");
+    else if (mode == view_as<int>(AimMode_HumanisedHigh))  strcopy(ModeName_buf, sizeof(ModeName_buf), "humanised_high");
     else strcopy(ModeName_buf, sizeof(ModeName_buf), "?");
     return ModeName_buf;
 }
@@ -539,7 +607,18 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse,
         g_flEngageStartTime[client] = now;
         g_flEngageStartYaw[client] = currentYaw;
         g_flEngageStartPitch[client] = currentPitch;
-        g_flReactionReadyTime[client] = now + (g_cvReactionMs.FloatValue / 1000.0);
+        float reactionMs = g_cvReactionMs.FloatValue;
+        if (g_iMode[client] == view_as<int>(AimMode_HumanisedHigh))
+        {
+            reactionMs = g_cvHHReactionMs.FloatValue;
+            // ±20% reaction jitter so flicks don't all start on the same tick.
+            reactionMs *= GetRandomFloat(0.8, 1.2);
+            g_bHHOvershootActive[client] =
+                GetRandomFloat(0.0, 1.0) < g_cvHHOvershootProb.FloatValue;
+            g_flHHDriftPhaseYaw[client]   = GetRandomFloat(0.0, 6.2831853);
+            g_flHHDriftPhasePitch[client] = GetRandomFloat(0.0, 6.2831853);
+        }
+        g_flReactionReadyTime[client] = now + (reactionMs / 1000.0);
         g_flLastTargetSeenTime[client] = now;
     }
 
@@ -574,7 +653,7 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse,
         desiredYaw = NormalizeYaw(currentYaw + dyaw * gain);
         desiredPitch = ClampPitch(currentPitch + dpitch * gain);
     }
-    else // Humanised
+    else if (mode == view_as<int>(AimMode_Humanised))
     {
         if (now < g_flReactionReadyTime[client])
         {
@@ -593,6 +672,63 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse,
             desiredYaw   += GetRandomFloat(-jitter, jitter);
             desiredPitch += GetRandomFloat(-jitter * 0.6, jitter * 0.6);
         }
+        desiredYaw = NormalizeYaw(desiredYaw);
+        desiredPitch = ClampPitch(desiredPitch);
+    }
+    else // HumanisedHigh — flick-then-settle with distance-scaled jitter + drift
+    {
+        if (now < g_flReactionReadyTime[client])
+        {
+            return Plugin_Continue;
+        }
+
+        float angDist = g_flLastAngularDistance[client];
+        float decel = g_cvHHDecelDeg.FloatValue;
+        // t=1 when far (>=decel), t=0 when on target. Drives gain + jitter.
+        float t = angDist / decel;
+        if (t > 1.0) t = 1.0;
+        if (t < 0.0) t = 0.0;
+
+        float gainFar  = g_cvHHGainFar.FloatValue;
+        float gainNear = g_cvHHGainNear.FloatValue;
+        float gain = gainNear + (gainFar - gainNear) * t;
+
+        if (g_bHHOvershootActive[client])
+        {
+            gain *= g_cvHHOvershootMult.FloatValue;
+            // Clear once we've crossed close enough — the next tick will pull back.
+            if (angDist < g_cvHHSettleDeg.FloatValue)
+            {
+                g_bHHOvershootActive[client] = false;
+            }
+        }
+        if (gain > 1.0) gain = 1.0;
+
+        float dyaw = AngleDelta(currentYaw, targetYaw);
+        float dpitch = AngleDelta(currentPitch, targetPitch);
+        desiredYaw   = currentYaw   + dyaw   * gain;
+        desiredPitch = currentPitch + dpitch * gain;
+
+        // Distance-scaled jitter: big shake during flick, fine tremor when settled.
+        float jMove = g_cvHHJitterMoving.FloatValue;
+        float jRest = g_cvHHJitterSettled.FloatValue;
+        float jitter = jRest + (jMove - jRest) * t;
+        if (jitter > 0.0)
+        {
+            desiredYaw   += GetRandomFloat(-jitter, jitter);
+            desiredPitch += GetRandomFloat(-jitter * 0.7, jitter * 0.7);
+        }
+
+        // Slow drift, strongest when on target (humans wobble even when still).
+        float driftAmp = g_cvHHDriftDeg.FloatValue * (1.0 - t);
+        if (driftAmp > 0.0)
+        {
+            float w = g_cvHHDriftHz.FloatValue * 6.2831853;
+            float tnow = GetEngineTime();
+            desiredYaw   += driftAmp        * Sine(tnow * w + g_flHHDriftPhaseYaw[client]);
+            desiredPitch += driftAmp * 0.6  * Sine(tnow * w * 1.27 + g_flHHDriftPhasePitch[client]);
+        }
+
         desiredYaw = NormalizeYaw(desiredYaw);
         desiredPitch = ClampPitch(desiredPitch);
     }

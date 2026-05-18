@@ -12,7 +12,8 @@ from capture.bot_aim_generator import BotAimGenerator, load_config
 
 BOT_LABELS = {"bot_raw", "bot_smooth", "bot_humanised_low",
               "bot_humanised_med", "bot_humanised_high"}
-SM_NATIVE_LABELS = {"sm_native_raw", "sm_native_smooth", "sm_native_humanised_med"}
+SM_NATIVE_LABELS = {"sm_native_raw", "sm_native_smooth",
+                    "sm_native_humanised_med", "sm_native_humanised_high"}
 PROFILES_DIR = Path(__file__).parent / "bot_profiles"
 
 
@@ -35,6 +36,8 @@ def native_mode_from_label(label: str) -> str:
         return "smooth"
     if label == "sm_native_humanised_med":
         return "humanised"
+    if label == "sm_native_humanised_high":
+        return "humanised_high"
     raise ValueError(f"Unknown SM-native label: {label}")
 
 
@@ -53,7 +56,8 @@ def run_session():
 
     print("\nLabels: human, bot_raw, bot_smooth, bot_humanised_low, "
           "bot_humanised_med, bot_humanised_high, "
-          "sm_native_raw, sm_native_smooth, sm_native_humanised_med")
+          "sm_native_raw, sm_native_smooth, "
+          "sm_native_humanised_med, sm_native_humanised_high")
     label = input("Enter label: ").strip()
     if not label:
         print("Error: label required.")
@@ -120,7 +124,12 @@ def run_session():
         print("          sm_telemetry_me")
 
     print("\n" + "=" * 50)
-    print("In CS:Source console, run:")
+    print("In CS:Source console, run (in this order):")
+    # cl_cmdrate caps the OnPlayerRunCmd hook in cs_aim_telemetry.sp.
+    # Default cl_cmdrate is ~66 → telemetry caps at ~66 Hz instead of 100.
+    print("  cl_cmdrate 100")
+    print("  cl_updaterate 100")
+    print("  rate 1000000")
     print(f"  record {session_name}")
     print("  sm_telemetry_me")
     print("=" * 50)
