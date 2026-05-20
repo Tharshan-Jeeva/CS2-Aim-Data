@@ -67,7 +67,6 @@ pip install -r requirements.txt
 **Verify:**
 
 ```bash
-groups | tr ' ' '\n' | grep -x input    # → input
 python -c "import flask, numpy, sklearn; print('ok')"   # → ok
 ```
 
@@ -196,44 +195,10 @@ default — see Appendix B if you want to compare it against the native path.
 
 ## 9. Server config
 
-The repo ships an audited `server.cfg`. Copy it into the install:
+The repo ships an audited `server_config/server.cfg`. Copy it into the install:
 
 ```bash
-cp -v cssource_server/cstrike/cfg/server.cfg \
-      cssource_server/cstrike/cfg/server.cfg.bak 2>/dev/null || true
-
-# Then write the canonical study config:
-cat > cssource_server/cstrike/cfg/server.cfg <<'EOF'
-hostname "Aim Data Collection"
-
-sv_lan 1
-sv_pure 0
-sv_maxrate 0
-sv_minrate 100000
-sv_maxupdaterate 100
-sv_minupdaterate 100
-
-bot_quota 5
-bot_difficulty 2
-bot_quota_mode normal
-bot_join_after_player 1
-bot_join_team CT
-
-// Weapon restrictions for the study.
-bot_allow_grenades 0   // no HE / flash / smoke from bots
-bot_allow_snipers 0    // no AWP, Scout, G3SG1, SG550
-
-mp_autoteambalance 0
-mp_limitteams 0
-mp_freezetime 0
-mp_roundtime 60
-mp_startmoney 16000
-mp_buytime 9999
-mp_timelimit 0
-mp_round_restart_delay 0
-
-mp_restartgame 1
-EOF
+cp server_config/server.cfg cssource_server/cstrike/cfg/server.cfg
 ```
 
 Why these settings:
