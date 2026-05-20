@@ -62,10 +62,7 @@ cd CS2-Aim-Data
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-sudo usermod -aG input "$USER"     # required for evdev keyboard capture
 ```
-
-Log out and back in so the `input` group takes effect.
 
 **Verify:**
 
@@ -346,7 +343,6 @@ Play one or two rounds, then press **Ctrl+C** in Terminal 2.
 ```bash
 ls -la sessions/ | tail -3
 # → SMOKE01_sm_native_humanised_high_<unix_ts>_events.json
-# → SMOKE01_sm_native_humanised_high_<unix_ts>_keyboard_*.csv
 ```
 
 File size for a 60-second smoke test should be on the order of 1–2 MB JSON.

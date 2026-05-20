@@ -15,14 +15,13 @@ CS:Source dedicated server (srcds_linux + Tickrate_Enabler → 100 Hz)
 Python pipeline (capture/)
     ├── telemetry_server.py              Flask receiver → sort/dedupe → JSON
     ├── session_orchestrator.py          Session runner (labels, console hints)
-    ├── evdev_keyboard_capture.py        Raw keyboard log (human sessions)
     └── bot_profiles/                    YAML parameter sets (kept for the
                                          dissertation — documents the bot
                                          design space and the legacy
                                          Python-TCP aim path)
 
 Data
-    └── sessions/                        Per-session events JSON + keyboard CSV
+    └── sessions/                        Per-session events JSON
 
 Analysis (analysis/)
     ├── audit_tickrate.py                Capture-quality gate (--active-only)

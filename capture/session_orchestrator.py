@@ -7,7 +7,6 @@ import queue
 from pathlib import Path
 
 from capture.telemetry_server import create_app, save_events, run_server
-from capture.evdev_keyboard_capture import EvdevKeyboardCapture
 from capture.bot_aim_generator import BotAimGenerator, load_config
 
 BOT_LABELS = {"bot_raw", "bot_smooth", "bot_humanised_low",
@@ -86,17 +85,6 @@ def run_session():
     time.sleep(0.5)
     print("[Session] Telemetry server running on port 3000")
 
-    kbd = EvdevKeyboardCapture(
-        output_file=f"sessions/{session_name}_keyboard",
-        cs_focus_only=True)
-    try:
-        kbd.start_capture(session_name)
-        print("[Session] Keyboard capture started")
-    except RuntimeError as exc:
-        kbd = None
-        print(f"[Session] Keyboard capture unavailable: {exc}")
-        print("[Session] Continuing with telemetry only.")
-
     bot_thread = None
     if is_bot_session(label):
         config_path = resolve_bot_profile(label)
@@ -147,8 +135,6 @@ def run_session():
     except KeyboardInterrupt:
         stop_event.set()
 
-    if kbd is not None:
-        kbd.stop_capture()
     save_events(app)
 
     print(f"\n[Session] Done. Files saved to sessions/")
