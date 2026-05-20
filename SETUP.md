@@ -91,10 +91,10 @@ target `cssource_server/` is the path the launch script expects and is
 **Verify:**
 
 ```bash
-ls cssource_server/srcds_linux cssource_server/cstrike/cfg/server.cfg
+ls cssource_server/srcds_linux
 ```
 
-Both files must exist.
+The binary must exist. (`server.cfg` is copied in §9 — it won't be here yet.)
 
 ---
 

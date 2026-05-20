@@ -71,7 +71,7 @@ sm_nativeaim_active 0                    // bind to MOUSE4 (see SETUP.md §8)
 
 | Label                          | Native mode       | Notes                                                  |
 |--------------------------------|-------------------|--------------------------------------------------------|
-| `human`                        | (assist off)      | Subject plays manually; keyboard captured for labels   |
+| `human`                        | (assist off)      | Subject plays manually, no assist active               |
 | `sm_native_raw`                | raw               | Zero-latency instant snap                              |
 | `sm_native_smooth`             | smooth            | Distance-scaled gain, linear settle                    |
 | `sm_native_humanised_med`      | humanised         | Reaction delay + light jitter                          |
