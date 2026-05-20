@@ -7,11 +7,12 @@ import queue
 from pathlib import Path
 
 from capture.telemetry_server import create_app, save_events, run_server
-from capture.evdev_keyboard_capture import EvdevKeyboardCapture
 from capture.bot_aim_generator import BotAimGenerator, load_config
 
 BOT_LABELS = {"bot_raw", "bot_smooth", "bot_humanised_low",
               "bot_humanised_med", "bot_humanised_high"}
+SM_NATIVE_LABELS = {"sm_native_raw", "sm_native_smooth",
+                    "sm_native_humanised_med", "sm_native_humanised_high"}
 PROFILES_DIR = Path(__file__).parent / "bot_profiles"
 
 
@@ -21,6 +22,22 @@ def build_session_name(player_id: str, label: str) -> str:
 
 def is_bot_session(label: str) -> bool:
     return label in BOT_LABELS
+
+
+def is_sm_native_session(label: str) -> bool:
+    return label in SM_NATIVE_LABELS
+
+
+def native_mode_from_label(label: str) -> str:
+    if label == "sm_native_raw":
+        return "raw"
+    if label == "sm_native_smooth":
+        return "smooth"
+    if label == "sm_native_humanised_med":
+        return "humanised"
+    if label == "sm_native_humanised_high":
+        return "humanised_high"
+    raise ValueError(f"Unknown SM-native label: {label}")
 
 
 def resolve_bot_profile(label: str) -> str:
@@ -37,7 +54,9 @@ def run_session():
         sys.exit(1)
 
     print("\nLabels: human, bot_raw, bot_smooth, bot_humanised_low, "
-          "bot_humanised_med, bot_humanised_high")
+          "bot_humanised_med, bot_humanised_high, "
+          "sm_native_raw, sm_native_smooth, "
+          "sm_native_humanised_med, sm_native_humanised_high")
     label = input("Enter label: ").strip()
     if not label:
         print("Error: label required.")
@@ -51,6 +70,7 @@ def run_session():
     print(f"\n[Session] {session_name}")
     print(f"[Session] Label: {label}")
     print(f"[Session] Bot session: {is_bot_session(label)}")
+    print(f"[Session] SM-native session: {is_sm_native_session(label)}")
 
     # maxsize=1: live bot control always reads the freshest tick only.
     # Full telemetry history is still saved by telemetry_server regardless.
@@ -65,17 +85,6 @@ def run_session():
     time.sleep(0.5)
     print("[Session] Telemetry server running on port 3000")
 
-    kbd = EvdevKeyboardCapture(
-        output_file=f"sessions/{session_name}_keyboard",
-        cs_focus_only=True)
-    try:
-        kbd.start_capture(session_name)
-        print("[Session] Keyboard capture started")
-    except RuntimeError as exc:
-        kbd = None
-        print(f"[Session] Keyboard capture unavailable: {exc}")
-        print("[Session] Continuing with telemetry only.")
-
     bot_thread = None
     if is_bot_session(label):
         config_path = resolve_bot_profile(label)
@@ -89,8 +98,26 @@ def run_session():
         print("          sm_override_active 1")
         print("          sm_override_me")
 
+    if is_sm_native_session(label):
+        native_mode = native_mode_from_label(label)
+        print("[Session] SourceMod-native aim mode selected.")
+        print("[Session] Python BotAimGenerator is NOT started for this label.")
+        print("[Session] In CS:Source console run:")
+        print(f"          sm_nativeaim_mode {native_mode}")
+        print("          sm_nativeaim_active 0")
+        print('          alias +nativeaim "sm_nativeaim_active 1"')
+        print('          alias -nativeaim "sm_nativeaim_active 0"')
+        print("          bind mouse4 +nativeaim")
+        print("          sm_nativeaim_status")
+        print("          sm_telemetry_me")
+
     print("\n" + "=" * 50)
-    print("In CS:Source console, run:")
+    print("In CS:Source console, run (in this order):")
+    # cl_cmdrate caps the OnPlayerRunCmd hook in cs_aim_telemetry.sp.
+    # Default cl_cmdrate is ~66 → telemetry caps at ~66 Hz instead of 100.
+    print("  cl_cmdrate 100")
+    print("  cl_updaterate 100")
+    print("  rate 1000000")
     print(f"  record {session_name}")
     print("  sm_telemetry_me")
     print("=" * 50)
@@ -108,8 +135,6 @@ def run_session():
     except KeyboardInterrupt:
         stop_event.set()
 
-    if kbd is not None:
-        kbd.stop_capture()
     save_events(app)
 
     print(f"\n[Session] Done. Files saved to sessions/")

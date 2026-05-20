@@ -24,9 +24,20 @@ CODEX_HANDOFF.md
 Assignment Brief/
 docs/
 demos/
+figures/
 listener.py
 send_fake_tick.py
 
 # Claude Code local session data
 .claude/
 server setup.txt
+/analysis/*
+!/analysis/__init__.py
+!/analysis/labels.py
+!/analysis/features.py
+!/analysis/audit_tickrate.py
+!/analysis/plot_trajectories.py
+/tests
+/Tickrate_Enabler_linx86
+/UAL_Undergrad_Thesis_Template
+UAL_Undergrad_Thesis_Template.zip
