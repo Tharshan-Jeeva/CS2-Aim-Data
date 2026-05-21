@@ -23,9 +23,15 @@ PROFILES_DIR = Path(__file__).parent / "bot_profiles"
 DEFAULT_DURATION_S = 300.0
 
 # If ticks stop arriving for this many seconds after the first tick has been
-# seen, warn the researcher. The most common cause is the participant having
-# accidentally killed the CS:Source server in another terminal.
+# seen, warn the researcher. Ticks can legitimately pause when the player is
+# dead between rounds, so this is a SOFT warning and never aborts the session.
 TICK_LOSS_WARN_S = 10.0
+
+# Heartbeats fire every 0.5 s in the SourceMod plugin regardless of whether the
+# player is alive. If heartbeats stop, the participant disconnected, the server
+# was killed, or Flask is no longer reachable — the session is dead.
+HEARTBEAT_LOSS_WARN_S = 5.0
+HEARTBEAT_LOSS_ABORT_S = 30.0
 
 # How often to print progress lines.
 PROGRESS_INTERVAL_S = 10.0
@@ -67,18 +73,30 @@ def count_ticks(app) -> int:
     return sum(1 for e in get_events(app) if e.get("type") == "tick")
 
 
-def generate_manifest(session_name: str, events_path: str) -> dict:
+def count_heartbeats(app) -> int:
+    return sum(1 for e in get_events(app) if e.get("type") == "heartbeat")
+
+
+def generate_manifest(session_name: str, events_path: str,
+                      diagnostics: dict | None = None) -> dict:
     """Write a quick-check summary next to the events file.
 
     The flags it emits are the same ones the analysis pipeline uses as
     exclusion criteria, so a researcher sees data-quality problems
     immediately after Ctrl+C instead of three weeks later in the audit.
+
+    `diagnostics` records orchestrator-side timing (start/stop in wall-clock
+    Unix epoch, stop_reason). Compare these against the in-game
+    `timestamp_server` to see whether the data stream died early (plugin /
+    participant gone) or the orchestrator itself was killed early
+    (Ctrl+C in the wrong window).
     """
     path = Path(events_path)
     with open(path) as f:
         events = json.load(f)
 
     ticks = [e for e in events if e.get("type") == "tick"]
+    heartbeats = [e for e in events if e.get("type") == "heartbeat"]
     fires = [e for e in events if e.get("type") == "weapon_fire"]
     kills = [e for e in events if e.get("type") == "kill"]
     rounds = [e for e in events if e.get("type") == "round_start"]
@@ -94,24 +112,73 @@ def generate_manifest(session_name: str, events_path: str) -> dict:
     flags: list[str] = []
     if duration_s < 270:
         flags.append("duration_below_270s")
-    if mean_hz and mean_hz < 95:
-        flags.append("mean_hz_below_95")
+    # Note: the manifest's `estimated_hz` is intentionally naive — it averages
+    # ticks across the full game-time span, including between-round dead time
+    # when the player isn't alive. That makes it always look ~85-90 Hz for a
+    # healthy session. The audit's `--active-only` mode is the authoritative
+    # Hz check (strips dead time → reports the true ~100 Hz). We only flag
+    # here if Hz is catastrophically low — a real signal of capture failure
+    # rather than a normal artefact of between-round downtime.
+    if mean_hz and mean_hz < 60:
+        flags.append("mean_hz_below_60")
     if len(fires) < 10:
         flags.append("fewer_than_10_fires")
     if not ticks:
         flags.append("no_ticks_received")
 
+    # Cross-check: did the orchestrator outlive the data stream?
+    # If yes, the source of the cut-off is in CS:Source / SourceMod / the
+    # participant's client — NOT the orchestrator. If no, it's the
+    # orchestrator (Ctrl+C in wrong window, terminal closed, etc.).
+    if diagnostics and ticks:
+        orch_runtime_after_last_tick = (
+            diagnostics["stop_unix_ts"] - diagnostics["last_event_unix_ts"]
+        )
+        if orch_runtime_after_last_tick > 5.0:
+            flags.append("data_stream_died_before_orchestrator")
+        elif orch_runtime_after_last_tick < 1.0 and diagnostics["stop_reason"] != "duration_reached":
+            flags.append("orchestrator_killed_while_streaming")
+
+    # Wall-clock vs game-time ratio.
+    #
+    # The plugin sends one tick per server frame, with each tick stamped at
+    # GetGameTime() + 0.01s. If the server is CPU-starved and only manages,
+    # say, 28 frames per real second, the captured `timestamp_server` values
+    # will look like a clean 100 Hz stream (because each frame still advances
+    # the clock by 0.01 s) — but the actual session length will be ~28% of
+    # wall clock. The audit cannot see this, because it measures inter-tick
+    # intervals using the *server's* clock.
+    #
+    # Detect it by comparing wall-clock event-arrival span against game-time
+    # tick span. A healthy server runs at ~100% real-time; <90% is a hard
+    # red flag that the server is falling behind.
+    if diagnostics and ticks and diagnostics.get("first_tick_unix_ts"):
+        wall_span = diagnostics["last_event_unix_ts"] - diagnostics["first_tick_unix_ts"]
+        if wall_span > 5.0:
+            realtime_ratio = duration_s / wall_span
+            manifest_extra_realtime = round(realtime_ratio, 3)
+            if realtime_ratio < 0.90:
+                flags.append("server_slower_than_realtime")
+        else:
+            manifest_extra_realtime = None
+    else:
+        manifest_extra_realtime = None
+
     manifest = {
         "session_name": session_name,
         "events_file": path.name,
         "tick_count": len(ticks),
+        "heartbeat_count": len(heartbeats),
         "duration_s": round(duration_s, 1),
         "estimated_hz": round(mean_hz, 2),
+        "realtime_ratio": manifest_extra_realtime,
         "weapon_fires": len(fires),
         "kills": len(kills),
         "rounds": len(rounds),
         "flags": flags,
     }
+    if diagnostics:
+        manifest["diagnostics"] = diagnostics
 
     manifest_path = path.with_name(path.stem.replace("_events", "_manifest") + ".json")
     with open(manifest_path, "w") as f:
@@ -249,48 +316,91 @@ def run_session(argv=None):
     # (server boot, joining the server, entering console commands) does not
     # consume the session window. This was the structural bug that caused
     # P02 / P03 / P04 sessions to be 1-3 min instead of 5.
+    #
+    # There are TWO watchdogs:
+    #   * tick watchdog (warns):  ticks can legitimately pause when the
+    #     participant dies between rounds, so we only warn — never abort.
+    #   * heartbeat watchdog (aborts): the SourceMod plugin sends a heartbeat
+    #     every 0.5 s regardless of whether the player is alive. If heartbeats
+    #     stop arriving, the participant has disconnected, the server is gone,
+    #     or the orchestrator's Flask receiver is no longer reachable. In all
+    #     three cases the session is dead — there is nothing to wait for.
     monot_now = time.monotonic
-    loop_start = monot_now()
-    first_tick_t = None
+    loop_start_mono = monot_now()
+    loop_start_wall = time.time()
+    first_tick_mono = None
+    first_tick_wall = None
     deadline = None
     last_seen_ticks = 0
-    last_tick_change_t = loop_start
-    last_progress_t = loop_start - PROGRESS_INTERVAL_S  # force immediate
+    last_seen_heartbeats = 0
+    last_tick_change_mono = loop_start_mono
+    last_heartbeat_change_mono = loop_start_mono
+    last_event_wall = loop_start_wall  # wall-clock of most recent ANY event
+    last_progress_t = loop_start_mono - PROGRESS_INTERVAL_S  # force immediate
     warned_no_first_tick = False
     warned_tick_loss = False
+    warned_heartbeat_loss = False
 
     try:
         while not stop_event.is_set():
             now = monot_now()
-            elapsed = now - loop_start
+            elapsed = now - loop_start_mono
 
             current_ticks = count_ticks(app)
+            current_heartbeats = count_heartbeats(app)
 
             # First-tick detection — this is what starts the duration clock.
-            if first_tick_t is None and current_ticks > 0:
-                first_tick_t = now
+            if first_tick_mono is None and current_ticks > 0:
+                first_tick_mono = now
+                first_tick_wall = time.time()
                 if auto_stop:
-                    deadline = first_tick_t + args.duration
+                    deadline = first_tick_mono + args.duration
                 print(f"\n[Session] First tick received at t={elapsed:.0f}s. "
                       f"{'Timer started, auto-stop in ' + str(int(args.duration)) + 's.' if auto_stop else 'Streaming.'}\n")
-                last_tick_change_t = now
+                last_tick_change_mono = now
+                last_heartbeat_change_mono = now
 
-            # Tick-flow watchdog.
+            # Tick-flow watchdog (warn-only).
             if current_ticks > last_seen_ticks:
                 last_seen_ticks = current_ticks
-                last_tick_change_t = now
+                last_tick_change_mono = now
+                last_event_wall = time.time()
                 warned_tick_loss = False
-            elif first_tick_t is not None:
-                idle_s = now - last_tick_change_t
+            elif first_tick_mono is not None:
+                idle_s = now - last_tick_change_mono
                 if idle_s >= TICK_LOSS_WARN_S and not warned_tick_loss:
-                    print(f"\n[Session] ⚠ WARNING: no ticks received for "
-                          f"{idle_s:.0f}s.\n"
-                          f"           Possible causes:\n"
-                          f"             - CS:Source server was Ctrl+C'd in "
-                          f"another terminal\n"
-                          f"             - participant disconnected from the server\n"
-                          f"             - player is dead between rounds (resumes shortly)\n")
+                    print(f"\n[Session] ⚠ no ticks for {idle_s:.0f}s "
+                          f"(player may be dead between rounds — checking heartbeats next).\n")
                     warned_tick_loss = True
+
+            # Heartbeat watchdog (abort if stream is truly dead).
+            if current_heartbeats > last_seen_heartbeats:
+                last_seen_heartbeats = current_heartbeats
+                last_heartbeat_change_mono = now
+                last_event_wall = time.time()
+                warned_heartbeat_loss = False
+            elif first_tick_mono is not None:
+                hb_idle_s = now - last_heartbeat_change_mono
+                if hb_idle_s >= HEARTBEAT_LOSS_WARN_S and not warned_heartbeat_loss:
+                    print(f"\n[Session] ⚠ WARNING: no heartbeats for "
+                          f"{hb_idle_s:.0f}s — the plugin/server side is "
+                          f"silent. Likely causes:\n"
+                          f"             - CS:Source dedicated server was killed "
+                          f"(Ctrl+C in the wrong terminal?)\n"
+                          f"             - participant's game crashed / they "
+                          f"alt-tabbed away long enough to disconnect\n"
+                          f"             - the orchestrator's Flask receiver is "
+                          f"no longer accepting requests\n"
+                          f"           Will auto-abort at {HEARTBEAT_LOSS_ABORT_S:.0f}s "
+                          f"of silence to avoid hiding the failure.\n")
+                    warned_heartbeat_loss = True
+                if hb_idle_s >= HEARTBEAT_LOSS_ABORT_S:
+                    print(f"\n[Session] Heartbeat silence exceeded "
+                          f"{HEARTBEAT_LOSS_ABORT_S:.0f}s — aborting. "
+                          f"Investigate before re-recording.")
+                    stop_reason["reason"] = "heartbeat_lost"
+                    stop_event.set()
+                    break
 
             # Auto-stop on deadline.
             if deadline is not None and now >= deadline:
@@ -302,9 +412,10 @@ def run_session(argv=None):
 
             # Periodic progress line.
             if now - last_progress_t >= PROGRESS_INTERVAL_S:
-                if first_tick_t is None:
+                if first_tick_mono is None:
                     print(f"[Session] t={elapsed:.0f}s — "
-                          f"waiting for first tick. "
+                          f"waiting for first tick "
+                          f"(heartbeats received: {current_heartbeats}). "
                           f"Did you run sm_telemetry_me in the game console?")
                     if elapsed >= 60 and not warned_no_first_tick:
                         print("[Session] ⚠ Still no ticks after 60s. "
@@ -312,11 +423,11 @@ def run_session(argv=None):
                               "player in-game and alive?")
                         warned_no_first_tick = True
                 else:
-                    session_elapsed = now - first_tick_t
+                    session_elapsed = now - first_tick_mono
                     remaining = max(0.0, args.duration - session_elapsed) if auto_stop else float('inf')
                     rem_str = f"remaining={remaining:.0f}s" if auto_stop else "no auto-stop"
                     print(f"[Session] session t={session_elapsed:.0f}s  "
-                          f"{rem_str}  ticks={current_ticks}")
+                          f"{rem_str}  ticks={current_ticks}  hb={current_heartbeats}")
                 last_progress_t = now
 
             time.sleep(0.5)
@@ -325,13 +436,74 @@ def run_session(argv=None):
         stop_event.set()
 
     # Final save + manifest. This block must run for every exit path.
+    stop_wall = time.time()
     events_path = save_events(app)
+    diagnostics = {
+        "stop_reason": stop_reason["reason"],
+        "auto_stop_enabled": auto_stop,
+        "requested_duration_s": args.duration if auto_stop else None,
+        "start_unix_ts": round(loop_start_wall, 3),
+        "first_tick_unix_ts": round(first_tick_wall, 3) if first_tick_wall else None,
+        "last_event_unix_ts": round(last_event_wall, 3),
+        "stop_unix_ts": round(stop_wall, 3),
+        "orchestrator_runtime_s": round(stop_wall - loop_start_wall, 1),
+        "orchestrator_seconds_after_last_event": round(stop_wall - last_event_wall, 1),
+    }
     try:
-        generate_manifest(session_name, events_path)
+        generate_manifest(session_name, events_path, diagnostics=diagnostics)
     except Exception as exc:
         print(f"[Session] Manifest generation failed: {exc}")
 
     print(f"\n[Session] Done. Stop reason: {stop_reason['reason']}")
+    print(f"[Session] Orchestrator ran for {diagnostics['orchestrator_runtime_s']}s; "
+          f"last event was {diagnostics['orchestrator_seconds_after_last_event']}s "
+          f"before stop.")
+    if diagnostics['orchestrator_seconds_after_last_event'] > 5:
+        print("[Session] → The data stream died BEFORE the orchestrator stopped — "
+              "look at CS:Source / SourceMod / the participant's game.")
+    elif stop_reason["reason"] == "ctrl_c" and diagnostics['orchestrator_seconds_after_last_event'] < 1:
+        print("[Session] → The orchestrator was Ctrl+C'd while data was still "
+              "streaming. Was the Ctrl+C in the right window?")
+
+    # If the server was running slower than real time, the data IS captured
+    # cleanly but the recorded gameplay is short. Tell the researcher LOUDLY.
+    if first_tick_wall is not None:
+        wall_span_final = last_event_wall - first_tick_wall
+        if wall_span_final > 5.0:
+            ticks_final = count_ticks(app)
+            actual_hz = ticks_final / wall_span_final if wall_span_final else 0.0
+            # Reload events to compute game-time span (cheap; same as manifest).
+            try:
+                with open(events_path) as f:
+                    ev = json.load(f)
+                tks = [e for e in ev if e.get("type") == "tick"]
+                game_span = (float(tks[-1]["timestamp_server"]) -
+                             float(tks[0]["timestamp_server"])) if len(tks) >= 2 else 0.0
+            except Exception:
+                game_span = 0.0
+            if wall_span_final and game_span:
+                ratio = game_span / wall_span_final
+                if ratio < 0.90:
+                    print()
+                    print("=" * 60)
+                    print(f"[Session] ⚠⚠⚠ SERVER RAN AT {ratio*100:.0f}% REAL-TIME SPEED ⚠⚠⚠")
+                    print(f"[Session] Wall clock window:  {wall_span_final:.1f}s "
+                          f"({wall_span_final/60:.1f} min)")
+                    print(f"[Session] Captured gameplay: {game_span:.1f}s "
+                          f"({game_span/60:.2f} min)")
+                    print(f"[Session] Actual tick rate:  {actual_hz:.1f} Hz "
+                          f"(target: 100 Hz)")
+                    print()
+                    print(f"[Session] CS:Source dedicated server is CPU-starved. "
+                          f"The audit cannot see this because timestamp_server "
+                          f"still advances cleanly at 100 Hz inside the stream.")
+                    print(f"[Session] Fixes (try in order):")
+                    print(f"[Session]   1. fps_max 60 in the game client (frees CPU)")
+                    print(f"[Session]   2. renice -n -10 the srcds_linux process "
+                          f"(higher scheduler priority)")
+                    print(f"[Session]   3. Reduce bot_quota or bot_difficulty")
+                    print(f"[Session]   4. Run the server on a separate machine")
+                    print("=" * 60)
     print(f"[Session] Files saved to sessions/")
     print(f"[Session] Don't forget: run 'stop' in CS:Source console")
     print(f"[Session] Move the .dem file to demos/{session_name}.dem")
