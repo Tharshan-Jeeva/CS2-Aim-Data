@@ -69,11 +69,93 @@ def parse_session_filename(path: Path) -> SessionMeta | None:
     )
 
 
-def discover_sessions(root: Path) -> list[SessionMeta]:
-    """List every recognised events.json in `root` (non-recursive)."""
-    metas = []
-    for p in sorted(root.glob("*_events.json")):
+def discover_sessions(root: Path, recursive: bool = True,
+                     exclude_dirs: tuple[str, ...] = ("OLD", "Questionnaire", "Deception questions"),
+                     allowed_labels: set[str] | None = None,
+                     ) -> list[SessionMeta]:
+    """List every recognised events.json under `root`.
+
+    Recursive by default so the per-participant subdir layout (sessions/P01/…)
+    works out of the box. Directories whose name appears in `exclude_dirs` are
+    pruned entirely — used to skip the pilot/test data in `sessions/OLD/` and
+    questionnaire JSON folders.
+
+    If `allowed_labels` is provided, only sessions whose parsed label is in
+    that set are kept (used to restrict to {human, sm_native_smooth,
+    sm_native_humanised_high} for the final classifier).
+    """
+    metas: list[SessionMeta] = []
+    pattern = "**/*_events.json" if recursive else "*_events.json"
+    excluded = set(exclude_dirs)
+    for p in sorted(root.glob(pattern)):
+        if any(part in excluded for part in p.relative_to(root).parts[:-1]):
+            continue
         meta = parse_session_filename(p)
-        if meta is not None:
-            metas.append(meta)
+        if meta is None:
+            continue
+        if allowed_labels is not None and meta.label not in allowed_labels:
+            continue
+        metas.append(meta)
     return metas
+
+
+# ---------------------------------------------------------------------------
+# Task / label-mapping configuration
+# ---------------------------------------------------------------------------
+
+# The recorded final-study conditions. `_med` was on the planning sheet but
+# `_high` is what actually got recorded — confirm with `discover_sessions` if
+# this assumption ever needs revisiting.
+FINAL_STUDY_LABELS: tuple[str, ...] = (
+    "human",
+    "sm_native_smooth",
+    "sm_native_humanised_high",
+)
+
+MULTICLASS_LABEL_TO_ID: dict[str, int] = {
+    "human": 0,
+    "sm_native_smooth": 1,
+    "sm_native_humanised_high": 2,
+}
+
+TASK_LABELS: dict[str, tuple[str, ...]] = {
+    "binary_all": FINAL_STUDY_LABELS,
+    "binary_smooth": ("human", "sm_native_smooth"),
+    "binary_humanised": ("human", "sm_native_humanised_high"),
+    "multiclass": FINAL_STUDY_LABELS,
+}
+
+
+def label_mapping(task: str) -> dict[str, int]:
+    """Return {label_string: class_index} for the requested task.
+
+    Supported task names:
+      - binary / binary_all: human vs all recognised aimbot labels
+      - binary_smooth: human vs sm_native_smooth
+      - binary_humanised: human vs sm_native_humanised_high
+      - multiclass: human / sm_native_smooth / sm_native_humanised_high
+    """
+    if task in {"binary", "binary_all"}:
+        m = {"human": 0}
+        m.update({lbl: 1 for lbl in BOT_LABELS})
+        return m
+    if task == "binary_smooth":
+        return {"human": 0, "sm_native_smooth": 1}
+    if task == "binary_humanised":
+        return {"human": 0, "sm_native_humanised_high": 1}
+    if task == "multiclass":
+        return dict(MULTICLASS_LABEL_TO_ID)
+    raise ValueError(
+        f"Unknown task: {task!r}. Expected one of: "
+        "binary, binary_all, binary_smooth, binary_humanised, multiclass."
+    )
+
+
+def labels_for_task(task: str) -> tuple[str, ...]:
+    """Condition labels included in a task."""
+    if task == "binary":
+        task = "binary_all"
+    if task not in TASK_LABELS:
+        # Validate through label_mapping for a clearer error.
+        label_mapping(task)
+    return TASK_LABELS[task]

@@ -18,13 +18,15 @@ venv/
 .vscode/
 .idea/
 CODEX_HANDOFF.md
-/Documents
 
 # Legacy / unused
 Assignment Brief/
 cs2_datacollection/
 parse/
-docs/
+docs/*
+!docs/
+!docs/participant-protocol.md
+!docs/transformer-training-pipeline.md
 demos/
 figures/
 listener.py
@@ -33,13 +35,43 @@ send_fake_tick.py
 # Claude Code local session data
 .claude/
 server setup.txt
+
+# Analysis submission source files. Keep generated datasets/results ignored.
 /analysis/*
 !/analysis/__init__.py
 !/analysis/labels.py
 !/analysis/features.py
+!/analysis/dataset.py
+!/analysis/baselines.py
 !/analysis/audit_tickrate.py
 !/analysis/plot_trajectories.py
+!/analysis/sequence_dataset.py
+!/analysis/preprocess_sequences.py
+!/analysis/transformer_model.py
+!/analysis/train_transformer.py
+!/analysis/evaluate_transformer.py
+!/analysis/run_baselines.py
+!/analysis/make_splits.py
+!/analysis/questionnaire_summary.py
+!/analysis/README.md
+!/analysis/configs/
+!/analysis/configs/transformer_default.json
+/analysis/processed/
+/analysis/results/
+runs/
+*.pt
+*.pth
+*.ckpt
+.ipynb_checkpoints/
 /tests
 /Tickrate_Enabler_linx86
 /UAL_Undergrad_Thesis_Template
 UAL_Undergrad_Thesis_Template.zip
+/docs
+/Documents
+/graphify-out
+*.xlsx
+/UAL_Undergrad_Thesis_Template__1_
+analysis/questionnaire_summary.py
+*.zip
+/UAL_Undergrad_Thesis_Template__1____1_

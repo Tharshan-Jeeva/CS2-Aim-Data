@@ -1,0 +1,37 @@
+{
+  "preprocess": {
+    "sessions_dir": "sessions",
+    "out_dir": "analysis/processed",
+    "results_dir": "analysis/results",
+    "config_name": "prefire_2s_ak47_aim_movement",
+    "window_start": -2.0,
+    "window_end": 0.0,
+    "seq_len": 200,
+    "feature_set": "aim_plus_movement",
+    "min_coverage": 0.8,
+    "gap_threshold": 0.1,
+    "weapon": "ak47",
+    "require_visible_enemy_at_fire": false
+  },
+  "model": {
+    "d_model": 64,
+    "n_heads": 4,
+    "n_layers": 2,
+    "dim_feedforward": 128,
+    "dropout": 0.1,
+    "pooling": "cls",
+    "conv_kernel": 0,
+    "conv_stride": 1
+  },
+  "training": {
+    "splitter": "lopo",
+    "epochs": 60,
+    "batch_size": 64,
+    "lr": 0.0003,
+    "weight_decay": 0.0001,
+    "patience": 10,
+    "grad_clip": 1.0,
+    "amp": true,
+    "device": "auto"
+  }
+}
