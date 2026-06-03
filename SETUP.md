@@ -233,9 +233,14 @@ cl_cmdrate 100        // OnPlayerRunCmd fires at the client's cmdrate
 cl_updaterate 100
 rate 1000000
 fps_max 300
-sensitivity 2.0       // fixed across all participants
+sensitivity <value>   // participant-specific; record in demographics JSON
 m_rawinput 1
 ```
+
+Record the participant's mouse DPI, in-game sensitivity, and any non-default
+`m_yaw`/`m_pitch` values in their demographics JSON. The analysis pipeline uses
+view-angle deltas in game degrees as the primary signal, but stores DPI,
+sensitivity, eDPI, and cm/360 metadata for audit and sensitivity reporting.
 
 Then connect to the LAN server and bind the aim toggle to MOUSE4 so it is
 physically identical for every participant and every condition:
