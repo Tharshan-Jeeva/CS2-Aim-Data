@@ -1,0 +1,32 @@
+{
+  "runs": [
+    {
+      "date": "2026-05-22T11:20:57.397542+00:00",
+      "input_tokens": 70000,
+      "output_tokens": 17402,
+      "files": 20
+    },
+    {
+      "date": "2026-05-22T17:00:14.823823+00:00",
+      "input_tokens": 76000,
+      "output_tokens": 19120,
+      "files": 14
+    },
+    {
+      "date": "2026-05-28T06:44:50.754844+00:00",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "files": 10,
+      "note": "incremental update: SP files added, bot_aim_generator.py removed"
+    },
+    {
+      "date": "2026-06-22T19:20:56.055661+00:00",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "files": 21,
+      "note": "code-only resync: removed all documentation + papers from eval (55 doc/paper nodes dropped, 17 doc/paper cache entries purged), pruned deleted transformer.py/run_transformer.py/.sp files"
+    }
+  ],
+  "total_input_tokens": 146000,
+  "total_output_tokens": 36522
+}
