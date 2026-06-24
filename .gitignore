@@ -32,7 +32,7 @@ figures/
 listener.py
 send_fake_tick.py
 
-# Claude Code local session data
+# Local AI/editor session data
 .claude/
 server setup.txt
 
