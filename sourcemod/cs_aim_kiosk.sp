@@ -154,6 +154,15 @@ public Action Timer_EquipVisitor(Handle timer, int userid)
         // visitor never runs dry over a long session. Make the AK active.
         EquipPlayerWeapon(client, ak);
     }
+
+    // Full armor + helmet every spawn.
+    SetEntProp(client, Prop_Send, "m_ArmorValue", 100);
+    SetEntProp(client, Prop_Send, "m_bHasHelmet", 1);
+
+    // Max wallet every round so the buy menu is always full (the AK is free
+    // anyway). Round resets on death, so this tops them up each round.
+    SetEntProp(client, Prop_Send, "m_iAccount", 16000);
+
     return Plugin_Stop;
 }
 

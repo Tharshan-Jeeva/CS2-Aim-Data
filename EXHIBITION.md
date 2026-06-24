@@ -22,9 +22,10 @@ The only aimbot used is the **SM-native in-engine controller**
 - **One command** brings up the dedicated server (supervised, auto-restarts on
   crash) and the game client (auto-connected to the server).
 - **MOTD panel** on join explains the controls and what the project is.
-- Visitor spawns **already holding an AK-47** on the T side, with **CT bots** to
-  shoot and **instant respawn** — they can never get stuck on a buy menu, death
-  screen, scoreboard, or map vote.
+- Visitor spawns **already holding an AK-47** (with full **armor + helmet** and a
+  maxed wallet) on the T side, with **CT bots** to shoot. On death the round
+  resets; every 30 deaths the map reloads — they can never get stuck on a buy
+  menu, death screen, scoreboard, or map vote.
 - **HOLD V** = aim assist takes over. Release = human baseline.
 - **Tap F** = cycle the assist style; the **current style is shown on screen**
   at all times, plus a chat reminder every 30 s.
