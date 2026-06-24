@@ -46,18 +46,15 @@ int g_iKioskMode[MAXPLAYERS + 1];
 ConVar g_cvEnable;
 ConVar g_cvTeam;            // team to lock visitors onto (2 = T, 3 = CT). Bots are CT.
 ConVar g_cvRoundsPerReset; // reload the map after this many visitor deaths (0 = never)
-ConVar g_cvAfkSeconds;     // re-show the MOTD after a visitor is idle this long (0 = off)
+ConVar g_cvAfkSeconds;     // reset the server (reload map) after a visitor is idle this long (0 = off)
 
 // Counts visitor deaths (= round resets) since the last full map reload.
 int g_iRoundsSinceReset = 0;
 
 // AFK tracking: last time each client gave input, and whether we've already
-// re-shown the MOTD for the current idle stretch.
+// triggered the idle reset for the current idle stretch.
 float g_flLastActivity[MAXPLAYERS + 1];
-bool  g_bAfkMotdShown[MAXPLAYERS + 1];
-
-// Cached contents of motd_text.txt, shown when a visitor goes AFK.
-char g_sMotdText[2048];
+bool  g_bAfkResetDone[MAXPLAYERS + 1];
 
 public void OnPluginStart()
 {
@@ -70,10 +67,10 @@ public void OnPluginStart()
     g_cvRoundsPerReset = CreateConVar("sm_kiosk_rounds_per_reset", "30",
         "Reload the map after this many visitor deaths/round-resets to clear accumulated state (0 = never)",
         FCVAR_NONE, true, 0.0, true, 1000.0);
-    // TEMPORARY: shortened to 15s for testing the AFK MOTD re-show. Set back to
-    // ~120 for the real exhibition (or change live with: sm_kiosk_afk_seconds 120).
+    // TEMPORARY: shortened to 15s for testing the AFK reset. Set back to ~120
+    // for the real exhibition (or change live with: sm_kiosk_afk_seconds 120).
     g_cvAfkSeconds = CreateConVar("sm_kiosk_afk_seconds", "15",
-        "Re-show the MOTD after a visitor has been idle this many seconds, so the next person sees it (0 = off)",
+        "Reset the server (reload the map) after a visitor has been idle this many seconds (0 = off)",
         FCVAR_NONE, true, 0.0, true, 3600.0);
 
     RegConsoleCmd("sm_kiosk_cycle", Cmd_Cycle,
@@ -92,27 +89,17 @@ public void OnPluginStart()
         g_iKioskMode[i] = 0;
     }
 
-    LoadMotdText();
-}
-
-public void OnMapStart()
-{
-    // Re-read in case the MOTD file changed between maps.
-    LoadMotdText();
-}
-
-// Cache motd_text.txt (sits in the game root) so we can re-display it to an
-// idle visitor without the engine's connect-time MOTD flow.
-void LoadMotdText()
-{
-    g_sMotdText[0] = '\0';
-    File f = OpenFile("motd_text.txt", "r");
-    if (f == null)
-        return;
-    char line[256];
-    while (!f.EndOfFile() && f.ReadLine(line, sizeof(line)))
-        StrCat(g_sMotdText, sizeof(g_sMotdText), line);
-    delete f;
+    // If the plugin is (re)loaded with players already connected, treat now as
+    // their last activity so we don't instantly count them as AFK.
+    float now = GetGameTime();
+    for (int i = 1; i <= MaxClients; i++)
+    {
+        if (IsClientInGame(i))
+        {
+            g_flLastActivity[i] = now;
+            g_bAfkResetDone[i] = false;
+        }
+    }
 }
 
 // Runs AFTER all server/map configs have exec'd and SourceMod is fully loaded.
@@ -141,7 +128,7 @@ public void OnClientPutInServer(int client)
 
     g_iKioskMode[client] = 0;
     g_flLastActivity[client] = GetGameTime();
-    g_bAfkMotdShown[client] = false;
+    g_bAfkResetDone[client] = false;
     // Place the visitor on the human side and start them in RAW. A short delay
     // lets the client finish entering the game before we switch team / spawn.
     CreateTimer(1.0, Timer_InitVisitor, GetClientUserId(client));
@@ -160,13 +147,14 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float vel[3
         || vel[0] != 0.0 || vel[1] != 0.0 || vel[2] != 0.0)
     {
         g_flLastActivity[client] = GetGameTime();
-        g_bAfkMotdShown[client] = false;
+        g_bAfkResetDone[client] = false;
     }
     return Plugin_Continue;
 }
 
-// Re-show the MOTD to anyone who has been idle past the threshold, once per
-// idle stretch, so a new person who sits down gets the instructions again.
+// When a visitor has been idle past the threshold, reset the server (reload the
+// map) so the next person gets a clean slate. Fires once per idle stretch; the
+// flag clears as soon as input resumes.
 public Action Timer_AfkCheck(Handle timer)
 {
     if (!g_cvEnable.BoolValue) return Plugin_Continue;
@@ -177,25 +165,16 @@ public Action Timer_AfkCheck(Handle timer)
     for (int i = 1; i <= MaxClients; i++)
     {
         if (!IsClientInGame(i) || IsFakeClient(i)) continue;
-        if (g_bAfkMotdShown[i]) continue;
+        if (g_bAfkResetDone[i]) continue;
         if (now - g_flLastActivity[i] >= threshold)
         {
-            ShowKioskMotd(i);
-            g_bAfkMotdShown[i] = true;
+            g_bAfkResetDone[i] = true;
+            PrintToChatAll("\x04[AIM STUDY]\x01 Player idle — resetting for the next person...");
+            ReloadMap();
+            break;   // one reload covers everyone
         }
     }
     return Plugin_Continue;
-}
-
-void ShowKioskMotd(int client)
-{
-    if (g_sMotdText[0] == '\0') return;
-    KeyValues kv = new KeyValues("data");
-    kv.SetString("title", "CCI Summer Festival - AimTrace Demo");
-    kv.SetNum("type", 0);            // 0 = MOTDPANEL_TYPE_TEXT (msg is literal text)
-    kv.SetString("msg", g_sMotdText);
-    ShowVGUIPanel(client, "info", kv, true);
-    delete kv;
 }
 
 public Action Timer_InitVisitor(Handle timer, int userid)
@@ -353,13 +332,10 @@ public Action Timer_VisitorReset(Handle timer)
     int per = g_cvRoundsPerReset.IntValue;
     if (per > 0 && g_iRoundsSinceReset >= per)
     {
-        // Periodic full reset: reload the current map. Recreates all entities
-        // and resets all game state without disconnecting the client.
+        // Periodic full reset: reload the current map.
         g_iRoundsSinceReset = 0;
-        char map[64];
-        GetCurrentMap(map, sizeof(map));
         PrintToChatAll("\x04[AIM STUDY]\x01 Periodic reset — reloading the map...");
-        ServerCommand("changelevel %s", map);
+        ReloadMap();
     }
     else
     {
@@ -368,6 +344,15 @@ public Action Timer_VisitorReset(Handle timer)
         ServerCommand("mp_restartgame 1");
     }
     return Plugin_Stop;
+}
+
+// Reload the current map: recreates all entities and resets all game state
+// (a "soft server restart") without disconnecting connected clients.
+void ReloadMap()
+{
+    char map[64];
+    GetCurrentMap(map, sizeof(map));
+    ServerCommand("changelevel %s", map);
 }
 
 public Action Cmd_Cycle(int client, int args)
