@@ -18,6 +18,10 @@
 #define HINT_INTERVAL     5.0
 // How often the chat reminder of the controls is printed.
 #define REMINDER_INTERVAL 30.0
+// How often the visitor's reserve ammo is topped up, and to what. This gives
+// effectively infinite reserve mags (they still reload, but never run dry).
+#define AMMO_REFILL_INTERVAL 1.0
+#define AMMO_RESERVE         250
 
 public Plugin myinfo = {
     name = "CS Aim Kiosk",
@@ -64,6 +68,7 @@ public void OnPluginStart()
 
     CreateTimer(HINT_INTERVAL, Timer_Hint, _, TIMER_REPEAT);
     CreateTimer(REMINDER_INTERVAL, Timer_Reminder, _, TIMER_REPEAT);
+    CreateTimer(AMMO_REFILL_INTERVAL, Timer_Ammo, _, TIMER_REPEAT);
 
     for (int i = 1; i <= MAXPLAYERS; i++)
     {
@@ -167,7 +172,35 @@ public Action Timer_EquipVisitor(Handle timer, int userid)
     // anyway). Round resets on death, so this tops them up each round.
     SetEntProp(client, Prop_Send, "m_iAccount", 16000);
 
+    // Top up reserve immediately so they don't start on a single mag.
+    RefillReserve(client);
+
     return Plugin_Stop;
+}
+
+// Keep the visitor's reserve ammo for their active weapon topped up, so they
+// effectively have infinite reserve mags (they still reload, never run dry).
+void RefillReserve(int client)
+{
+    if (!IsClientInGame(client) || IsFakeClient(client) || !IsPlayerAlive(client))
+        return;
+    int wep = GetEntPropEnt(client, Prop_Send, "m_hActiveWeapon");
+    if (wep <= 0)
+        return;
+    int ammoType = GetEntProp(wep, Prop_Send, "m_iPrimaryAmmoType");
+    if (ammoType < 0)
+        return;
+    if (GetEntProp(client, Prop_Send, "m_iAmmo", _, ammoType) < AMMO_RESERVE)
+        SetEntProp(client, Prop_Send, "m_iAmmo", AMMO_RESERVE, _, ammoType);
+}
+
+public Action Timer_Ammo(Handle timer)
+{
+    if (!g_cvEnable.BoolValue)
+        return Plugin_Continue;
+    for (int i = 1; i <= MaxClients; i++)
+        RefillReserve(i);
+    return Plugin_Continue;
 }
 
 void StripWeapons(int client)

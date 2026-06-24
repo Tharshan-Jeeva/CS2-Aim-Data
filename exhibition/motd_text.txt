@@ -10,8 +10,14 @@ CT bots. Respawn is instant.
   TAP   F  =  change assist style:
        raw -> smooth -> humanised -> high
 
-Current style shows at the bottom of your
-screen. Have fun -- this is the real aimbot
-from the study, which trains an AI to tell
-human aim from assisted aim.
+Each style is more human-like than the last:
+RAW snaps instantly (obvious robot), while
+HIGH adds reaction delay, jitter and overshoot
+so it looks almost human. The current style
+shows at the bottom of your screen.
+
+This is the real aimbot from the study. The
+project trains an AI to tell human aim from
+assisted aim -- so see if YOU can feel the
+difference. Have fun!
 ============================================

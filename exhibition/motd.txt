@@ -22,7 +22,10 @@
     <li><span class="key">TAP F</span> = change style:
         <span class="chain">raw &rarr; smooth &rarr; humanised &rarr; high</span></li>
   </ul>
-  <p>Current style shows at the bottom of your screen. Have fun &mdash; this is the
-     real aimbot from the study, which trains an AI to tell human aim from assisted aim.</p>
+  <p>Each style is more human-like than the last: <b>RAW</b> snaps instantly (an
+     obvious robot), while <b>HIGH</b> adds reaction delay, jitter and overshoot so
+     it looks almost human. The current style shows at the bottom of your screen.</p>
+  <p>This is the real aimbot from the study, which trains an AI to tell human aim
+     from assisted aim &mdash; see if <b>you</b> can feel the difference. Have fun!</p>
 </body>
 </html>
