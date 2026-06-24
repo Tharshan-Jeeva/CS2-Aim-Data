@@ -19,7 +19,9 @@ set -euo pipefail
 #  Operator-tunable settings
 # ----------------------------------------------------------------------------
 MAP="de_dust2"
-SERVER_IP="127.0.0.1"        # single box: client connects to localhost
+SERVER_IP="auto"             # "auto" = use the LAN IP srcds announces in its log
+                             # (127.0.0.1 often fails on hosts with docker bridges).
+                             # Set to a literal IP to force a specific address.
 SERVER_PORT=27015            # srcds game port (UDP)
 AUTO_LAUNCH_CLIENT=1         # 1 = also start + connect the game client
 CSS_APPID=240                # CS:Source Steam app id
@@ -156,6 +158,22 @@ server_ready() {
         | grep -qE "Assigned anonymous gameserver Steam ID|VAC secure mode disabled|setting tickrate to"
 }
 
+# Pick the address the client should connect to. On a host with docker bridges /
+# a non-trivial network (like this one), connecting to 127.0.0.1 frequently
+# fails while the LAN IP works. srcds prints the exact IP it bound in its log
+# ("Network: IP <ip>, mode MP, dedicated Yes"); we use that. SERVER_IP can be
+# set to a literal address to override the auto-detection.
+detect_server_ip() {
+    if [ "$SERVER_IP" != "auto" ]; then echo "$SERVER_IP"; return; fi
+    local ip
+    ip=$(grep -E "Network: IP [0-9.]+, mode MP, dedicated Yes" "$LOGS/srcds.log" 2>/dev/null \
+         | tail -1 | sed -E 's/.*Network: IP ([0-9.]+),.*/\1/')
+    if [ -n "$ip" ]; then echo "$ip"; return; fi
+    # Fallback: this host's primary outbound IPv4 (avoids docker/loopback IFs).
+    ip=$(ip -4 route get 1.1.1.1 2>/dev/null | sed -nE 's/.* src ([0-9.]+).*/\1/p' | head -1)
+    [ -n "$ip" ] && echo "$ip" || echo "127.0.0.1"
+}
+
 supervise_client() {
     command -v steam >/dev/null 2>&1 || { log "WARN: steam not on PATH; cannot auto-launch client."; return; }
 
@@ -169,18 +187,22 @@ supervise_client() {
         if [ "$waited" -ge "$CLIENT_WAIT_TIMEOUT" ]; then
             log "WARN: server still not answering after ${waited}s. Launching the client"
             log "      anyway; if it sits at the menu, the server hasn't finished booting —"
-            log "      check logs/srcds.log, then reconnect with: connect $SERVER_IP"
+            log "      check logs/srcds.log, then reconnect with: connect $(detect_server_ip):$SERVER_PORT"
             break
         fi
     done
     [ -f "$RUNFLAG" ] || return
-    server_ready && log "Server is answering on $SERVER_IP:$SERVER_PORT after ~${waited}s; launching client."
+
+    local connect_addr; connect_addr="$(detect_server_ip):$SERVER_PORT"
+    server_ready && log "Server ready after ~${waited}s; connecting client to $connect_addr"
 
     while [ -f "$RUNFLAG" ]; do
         if ! client_running; then
-            echo "===== $(date '+%F %T')  launching CS:S client =====" >> "$LOGS/client.log"
+            # Re-detect each launch in case the host IP changed (DHCP/VPN).
+            connect_addr="$(detect_server_ip):$SERVER_PORT"
+            echo "===== $(date '+%F %T')  launching CS:S client -> $connect_addr =====" >> "$LOGS/client.log"
             steam -applaunch "$CSS_APPID" -novid -console \
-                +exec autoexec_exhibition.cfg +connect "$SERVER_IP" \
+                +exec autoexec_exhibition.cfg +connect "$connect_addr" \
                 >> "$LOGS/client.log" 2>&1 &
             # Give Steam time to spin the game up before re-checking.
             sleep 30

@@ -107,7 +107,12 @@ Work top to bottom; stop as soon as one fixes it.
 2. **Is the client connected?** If the game shows the main menu, the visitor
    disconnected. The client supervisor relaunches/reconnects within ~30–40 s
    (single box). To force it: `./stop_exhibition.sh --all` then
-   `./start_exhibition.sh`.
+   `./start_exhibition.sh`. **`Connection failed after 4 retries` to
+   `127.0.0.1`?** On this host (docker bridges present) loopback connects often
+   fail — connect to the **LAN IP** instead. The launcher auto-detects it from
+   the IP srcds prints (`Network: IP <ip>`), but to do it by hand, read that IP
+   from `logs/srcds.log` and in the client console run `connect <ip>:27015`
+   (currently `10.97.72.94:27015`).
 
 3. **No bots to shoot?** In the server console (or via `tail logs/srcds.log`)
    confirm `bot_quota 5`. If bots are missing, the kiosk respawns them on death,
