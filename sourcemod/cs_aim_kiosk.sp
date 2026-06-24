@@ -22,6 +22,8 @@
 // effectively infinite reserve mags (they still reload, but never run dry).
 #define AMMO_REFILL_INTERVAL 1.0
 #define AMMO_RESERVE         250
+// How often we check for an idle (AFK) visitor to re-show the MOTD.
+#define AFK_CHECK_INTERVAL   5.0
 
 public Plugin myinfo = {
     name = "CS Aim Kiosk",
@@ -44,9 +46,18 @@ int g_iKioskMode[MAXPLAYERS + 1];
 ConVar g_cvEnable;
 ConVar g_cvTeam;            // team to lock visitors onto (2 = T, 3 = CT). Bots are CT.
 ConVar g_cvRoundsPerReset; // reload the map after this many visitor deaths (0 = never)
+ConVar g_cvAfkSeconds;     // re-show the MOTD after a visitor is idle this long (0 = off)
 
 // Counts visitor deaths (= round resets) since the last full map reload.
 int g_iRoundsSinceReset = 0;
+
+// AFK tracking: last time each client gave input, and whether we've already
+// re-shown the MOTD for the current idle stretch.
+float g_flLastActivity[MAXPLAYERS + 1];
+bool  g_bAfkMotdShown[MAXPLAYERS + 1];
+
+// Cached contents of motd_text.txt, shown when a visitor goes AFK.
+char g_sMotdText[2048];
 
 public void OnPluginStart()
 {
@@ -59,6 +70,9 @@ public void OnPluginStart()
     g_cvRoundsPerReset = CreateConVar("sm_kiosk_rounds_per_reset", "30",
         "Reload the map after this many visitor deaths/round-resets to clear accumulated state (0 = never)",
         FCVAR_NONE, true, 0.0, true, 1000.0);
+    g_cvAfkSeconds = CreateConVar("sm_kiosk_afk_seconds", "120",
+        "Re-show the MOTD after a visitor has been idle this many seconds, so the next person sees it (0 = off)",
+        FCVAR_NONE, true, 0.0, true, 3600.0);
 
     RegConsoleCmd("sm_kiosk_cycle", Cmd_Cycle,
         "Cycle aim style: raw -> smooth -> humanised -> humanised_high");
@@ -69,11 +83,34 @@ public void OnPluginStart()
     CreateTimer(HINT_INTERVAL, Timer_Hint, _, TIMER_REPEAT);
     CreateTimer(REMINDER_INTERVAL, Timer_Reminder, _, TIMER_REPEAT);
     CreateTimer(AMMO_REFILL_INTERVAL, Timer_Ammo, _, TIMER_REPEAT);
+    CreateTimer(AFK_CHECK_INTERVAL, Timer_AfkCheck, _, TIMER_REPEAT);
 
     for (int i = 1; i <= MAXPLAYERS; i++)
     {
         g_iKioskMode[i] = 0;
     }
+
+    LoadMotdText();
+}
+
+public void OnMapStart()
+{
+    // Re-read in case the MOTD file changed between maps.
+    LoadMotdText();
+}
+
+// Cache motd_text.txt (sits in the game root) so we can re-display it to an
+// idle visitor without the engine's connect-time MOTD flow.
+void LoadMotdText()
+{
+    g_sMotdText[0] = '\0';
+    File f = OpenFile("motd_text.txt", "r");
+    if (f == null)
+        return;
+    char line[256];
+    while (!f.EndOfFile() && f.ReadLine(line, sizeof(line)))
+        StrCat(g_sMotdText, sizeof(g_sMotdText), line);
+    delete f;
 }
 
 // Runs AFTER all server/map configs have exec'd and SourceMod is fully loaded.
@@ -101,9 +138,62 @@ public void OnClientPutInServer(int client)
     if (IsFakeClient(client)) return;
 
     g_iKioskMode[client] = 0;
+    g_flLastActivity[client] = GetGameTime();
+    g_bAfkMotdShown[client] = false;
     // Place the visitor on the human side and start them in RAW. A short delay
     // lets the client finish entering the game before we switch team / spawn.
     CreateTimer(1.0, Timer_InitVisitor, GetClientUserId(client));
+}
+
+// Track input so we can tell when a visitor has wandered off. Any movement,
+// mouse-aim, or button press counts as activity and clears the AFK flag.
+public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float vel[3],
+    float angles[3], int &weapon, int &subtype, int &cmdnum, int &tickcount,
+    int &seed, int mouse[2])
+{
+    if (client <= 0 || client > MaxClients) return Plugin_Continue;
+    if (!IsClientInGame(client) || IsFakeClient(client)) return Plugin_Continue;
+
+    if (buttons != 0 || mouse[0] != 0 || mouse[1] != 0
+        || vel[0] != 0.0 || vel[1] != 0.0 || vel[2] != 0.0)
+    {
+        g_flLastActivity[client] = GetGameTime();
+        g_bAfkMotdShown[client] = false;
+    }
+    return Plugin_Continue;
+}
+
+// Re-show the MOTD to anyone who has been idle past the threshold, once per
+// idle stretch, so a new person who sits down gets the instructions again.
+public Action Timer_AfkCheck(Handle timer)
+{
+    if (!g_cvEnable.BoolValue) return Plugin_Continue;
+    float threshold = g_cvAfkSeconds.FloatValue;
+    if (threshold <= 0.0) return Plugin_Continue;
+
+    float now = GetGameTime();
+    for (int i = 1; i <= MaxClients; i++)
+    {
+        if (!IsClientInGame(i) || IsFakeClient(i)) continue;
+        if (g_bAfkMotdShown[i]) continue;
+        if (now - g_flLastActivity[i] >= threshold)
+        {
+            ShowKioskMotd(i);
+            g_bAfkMotdShown[i] = true;
+        }
+    }
+    return Plugin_Continue;
+}
+
+void ShowKioskMotd(int client)
+{
+    if (g_sMotdText[0] == '\0') return;
+    KeyValues kv = new KeyValues("data");
+    kv.SetString("title", "CCI Summer Festival - AimTrace Demo");
+    kv.SetNum("type", 0);            // 0 = MOTDPANEL_TYPE_TEXT (msg is literal text)
+    kv.SetString("msg", g_sMotdText);
+    ShowVGUIPanel(client, "info", kv, true);
+    delete kv;
 }
 
 public Action Timer_InitVisitor(Handle timer, int userid)

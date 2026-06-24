@@ -31,6 +31,9 @@ The only aimbot used is the **SM-native in-engine controller**
   at all times, plus a chat reminder every 30 s.
 - Match never ends (`mp_timelimit 0`, `mp_maxrounds 0`,
   `mp_ignore_round_win_conditions 1`), so it runs unattended indefinitely.
+- If a visitor wanders off, after `sm_kiosk_afk_seconds` (default 120 s) of no
+  input the **MOTD re-appears**, so the next person who sits down gets the
+  instructions again.
 
 ## Controls (the real ones, from the plugins)
 
