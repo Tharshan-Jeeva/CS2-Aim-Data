@@ -14,7 +14,7 @@ just keep going.
 
 **2.  Play normally  =  you're the HUMAN.**
 
-**3.  HOLD `MOUSE4`  =  the AIM ASSIST takes over**
+**3.  HOLD `V`  =  the AIM ASSIST takes over**
 and snaps your crosshair onto the nearest enemy.
 Let go to aim yourself again.
 
@@ -41,5 +41,5 @@ human-like, can a machine still tell it's not you?
 
 ---
 
-*Controls:  **HOLD MOUSE4** = aim assist  ·  **TAP F** = change style.*
+*Controls:  **HOLD V** = aim assist  ·  **TAP F** = change style.*
 *Nothing about you is recorded — this is just for fun.*

@@ -202,7 +202,7 @@ public Action Cmd_Cycle(int client, int args)
     int idx = g_iKioskMode[client];
     SetControllerMode(client, idx);
 
-    PrintHintText(client, "AIM STYLE: %s   (%d/4)\nHOLD MOUSE4 = assist  |  F = change style",
+    PrintHintText(client, "AIM STYLE: %s   (%d/4)\nHOLD V = assist  |  F = change style",
         g_sModeName[idx], idx + 1);
     // Audible feedback so the visitor knows the press registered.
     ClientCommand(client, "play buttons/button14.wav");
@@ -229,7 +229,7 @@ public Action Timer_Hint(Handle timer)
         if (!IsClientInGame(i) || IsFakeClient(i) || !IsPlayerAlive(i))
             continue;
         int idx = g_iKioskMode[i];
-        PrintHintText(i, "AIM STYLE: %s   (%d/4)\nHOLD MOUSE4 = assist  |  F = change style",
+        PrintHintText(i, "AIM STYLE: %s   (%d/4)\nHOLD V = assist  |  F = change style",
             g_sModeName[idx], idx + 1);
     }
     return Plugin_Continue;
@@ -244,7 +244,7 @@ public Action Timer_Reminder(Handle timer)
     {
         if (!IsClientInGame(i) || IsFakeClient(i))
             continue;
-        PrintToChat(i, "\x04[AIM STUDY]\x01 HOLD \x04MOUSE4\x01 = aim assist ON (release = you, the human).");
+        PrintToChat(i, "\x04[AIM STUDY]\x01 HOLD \x04V\x01 = aim assist ON (release = you, the human).");
         PrintToChat(i, "\x04[AIM STUDY]\x01 Press \x04F\x01 to change style: raw \xE2\x86\x92 smooth \xE2\x86\x92 humanised \xE2\x86\x92 high.");
     }
     return Plugin_Continue;

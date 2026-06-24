@@ -1,40 +1,28 @@
 <!--
-  HTML MOTD shown on connect. Some CS:Source builds render the HTML MOTD
-  unreliably, so the client autoexec sets `cl_disablehtmlmotd 1`, which makes
-  the engine use motd_text.txt instead (plain text ALWAYS renders). This file
-  is kept only as a nicer fallback if HTML is ever re-enabled.
+  HTML MOTD shown on connect. The client autoexec sets `cl_disablehtmlmotd 1`,
+  so the engine actually shows motd_text.txt (plain text always renders). This
+  HTML is just a nicer fallback if HTML is ever re-enabled.
 -->
 <html>
 <head><meta charset="utf-8">
 <style>
   body { background:#11141a; color:#e8eef5; font-family:Arial,Helvetica,sans-serif;
          margin:0; padding:18px; }
-  h1   { color:#ffcc33; font-size:22px; margin:0 0 6px 0; }
-  h2   { color:#7fd1ff; font-size:15px; margin:14px 0 4px 0; }
-  p,li { font-size:14px; line-height:1.45; }
+  h1   { color:#ffcc33; font-size:22px; margin:0 0 8px 0; }
+  p,li { font-size:14px; line-height:1.5; }
   .key { background:#2a3340; color:#ffcc33; padding:1px 6px; border-radius:4px;
          font-weight:bold; }
   .chain { color:#9be29b; font-weight:bold; }
 </style></head>
 <body>
   <h1>AIM-ASSIST DEMO &mdash; please play!</h1>
-  <p>This is part of a research project that trains an AI model to tell
-     <b>human aim</b> apart from <b>aim-assisted aim</b>. Here you get to feel the
-     different assist styles for yourself.</p>
-
-  <h2>How to play</h2>
+  <p>You spawn T-side with an <b>AK-47</b>. Shoot the CT bots. Respawn is instant.</p>
   <ul>
-    <li>You spawn on the <b>T</b> side with an <b>AK-47</b>. The CT bots are your
-        targets. Respawn is instant &mdash; just keep playing.</li>
-    <li>Play normally = you are the <b>human</b> baseline.</li>
-    <li><span class="key">HOLD MOUSE4</span> = the <b>aim assist</b> takes over and
-        pulls your crosshair onto the nearest enemy. Release to aim yourself.</li>
-    <li>Tap <span class="key">F</span> to change the assist style:<br>
-        <span class="chain">RAW &rarr; SMOOTH &rarr; HUMANISED &rarr; HUMANISED-HIGH</span><br>
-        RAW snaps instantly (robotic); each step looks more like a real person.</li>
+    <li><span class="key">HOLD V</span> = aim assist takes over &nbsp;|&nbsp; release = you aim (the human)</li>
+    <li><span class="key">TAP F</span> = change style:
+        <span class="chain">raw &rarr; smooth &rarr; humanised &rarr; high</span></li>
   </ul>
-
-  <p>The current style is shown at the bottom of your screen at all times.<br>
-     Have fun &mdash; this is the actual aimbot from the study.</p>
+  <p>Current style shows at the bottom of your screen. Have fun &mdash; this is the
+     real aimbot from the study, which trains an AI to tell human aim from assisted aim.</p>
 </body>
 </html>

@@ -25,7 +25,7 @@ The only aimbot used is the **SM-native in-engine controller**
 - Visitor spawns **already holding an AK-47** on the T side, with **CT bots** to
   shoot and **instant respawn** — they can never get stuck on a buy menu, death
   screen, scoreboard, or map vote.
-- **HOLD MOUSE4** = aim assist takes over. Release = human baseline.
+- **HOLD V** = aim assist takes over. Release = human baseline.
 - **Tap F** = cycle the assist style; the **current style is shown on screen**
   at all times, plus a chat reminder every 30 s.
 - Match never ends (`mp_timelimit 0`, `mp_maxrounds 0`,
@@ -35,7 +35,7 @@ The only aimbot used is the **SM-native in-engine controller**
 
 | Action | Input | Under the hood |
 |---|---|---|
-| Engage aim assist | **HOLD MOUSE4** | `+nativeaim` → `sm_nativeaim_active 1/0` |
+| Engage aim assist | **HOLD V** | `+nativeaim` → `sm_nativeaim_active 1/0` |
 | Change assist style | **Tap F** | `sm_kiosk_cycle` → `sm_nativeaim_mode <style>` |
 | (Styles, in order) | — | `raw → smooth → humanised → humanised_high` |
 
@@ -118,7 +118,7 @@ Work top to bottom; stop as soon as one fixes it.
    confirm `bot_quota 5`. If bots are missing, the kiosk respawns them on death,
    but you can nudge with `bot_add_ct` in the server console.
 
-4. **Aim assist does nothing?** The visitor must be **alive and holding MOUSE4**,
+4. **Aim assist does nothing?** The visitor must be **alive and holding V**,
    with an enemy inside the FOV cone and in line of sight. Confirm the plugins
    loaded: server console `sm plugins list` should show **CS Aim Live
    Controller** and **CS Aim Kiosk**.
