@@ -31,9 +31,9 @@ The only aimbot used is the **SM-native in-engine controller**
   at all times, plus a chat reminder every 30 s.
 - Match never ends (`mp_timelimit 0`, `mp_maxrounds 0`,
   `mp_ignore_round_win_conditions 1`), so it runs unattended indefinitely.
-- If a visitor wanders off, after `sm_kiosk_afk_seconds` of no input the server
-  **resets (reloads the map)** so the next person gets a clean slate. (Default is
-  currently **15 s for testing** — set back to ~120 for the real event.)
+- If a visitor wanders off, after `sm_kiosk_afk_seconds` (default 90 s) of no
+  input the server **resets (reloads the map)** so the next person gets a clean
+  slate.
 
 ## Controls (the real ones, from the plugins)
 
