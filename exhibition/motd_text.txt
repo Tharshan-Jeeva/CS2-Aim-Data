@@ -1,0 +1,32 @@
+=====================================================
+   AIM-ASSIST DEMO  --  please play!
+=====================================================
+
+This is part of a research project that trains an AI
+model to tell HUMAN aim apart from AIM-ASSISTED aim.
+Here you get to feel the different assist styles for
+yourself.
+
+HOW TO PLAY
+-----------
+1. You spawn on the T (Terrorist) side with an AK-47.
+   The enemies (CT bots) are your targets. Respawn is
+   instant -- just keep playing.
+
+2. Play normally  =  you are the HUMAN baseline.
+
+3. HOLD  MOUSE4  =  the AIM ASSIST takes over and
+   pulls your crosshair onto the nearest enemy.
+   Release MOUSE4 to go back to aiming yourself.
+
+4. Tap  F  to change the assist STYLE:
+      RAW  ->  SMOOTH  ->  HUMANISED  ->  HUMANISED-HIGH
+   RAW snaps instantly (robotic). Each step looks more
+   and more like a real person. Feel the difference!
+
+The current style is shown at the bottom of your
+screen at all times.
+
+Have fun -- this is the actual aimbot from the study.
+
+=====================================================
