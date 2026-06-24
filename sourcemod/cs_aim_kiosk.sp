@@ -7,9 +7,12 @@
 
 #define PLUGIN_VERSION "1.0.0"
 
-// Delay before a dead player (visitor OR bot) is respawned. Short enough that
-// there is always a target on screen, long enough that the death is visible.
+// Delay before a dead bot is respawned. Short enough that there is always a
+// target on screen, long enough that the death is visible.
 #define RESPAWN_DELAY     1.5
+// Delay before the round/map resets after the VISITOR dies, so the kill is
+// visible before everything snaps back.
+#define RESET_DELAY       1.5
 // How often the on-screen "current aim style" hint is refreshed. Hint text
 // fades on its own, so we re-print it on a gentle cadence to keep it visible.
 #define HINT_INTERVAL     5.0
@@ -35,7 +38,11 @@ char g_sModeName[4][20] = { "RAW (robotic)", "SMOOTH", "HUMANISED",  "HUMANISED-
 int g_iKioskMode[MAXPLAYERS + 1];
 
 ConVar g_cvEnable;
-ConVar g_cvTeam;     // team to lock visitors onto (2 = T, 3 = CT). Bots are CT.
+ConVar g_cvTeam;            // team to lock visitors onto (2 = T, 3 = CT). Bots are CT.
+ConVar g_cvRoundsPerReset; // reload the map after this many visitor deaths (0 = never)
+
+// Counts visitor deaths (= round resets) since the last full map reload.
+int g_iRoundsSinceReset = 0;
 
 public void OnPluginStart()
 {
@@ -45,6 +52,9 @@ public void OnPluginStart()
     g_cvTeam = CreateConVar("sm_kiosk_team", "2",
         "Team to place human visitors on (2=T, 3=CT). Bots take the other side.",
         FCVAR_NONE, true, 1.0, true, 3.0);
+    g_cvRoundsPerReset = CreateConVar("sm_kiosk_rounds_per_reset", "30",
+        "Reload the map after this many visitor deaths/round-resets to clear accumulated state (0 = never)",
+        FCVAR_NONE, true, 0.0, true, 1000.0);
 
     RegConsoleCmd("sm_kiosk_cycle", Cmd_Cycle,
         "Cycle aim style: raw -> smooth -> humanised -> humanised_high");
@@ -168,26 +178,57 @@ public void Event_PlayerDeath(Event event, const char[] name, bool dontBroadcast
     int client = GetClientOfUserId(event.GetInt("userid"));
     if (client <= 0 || !IsClientInGame(client)) return;
 
-    // Respawn EVERYONE (visitors and bots). With mp_ignore_round_win_conditions
-    // the round never ends, but CS:S bots do not auto-respawn — without this the
-    // visitor would slowly run out of targets.
-    CreateTimer(RESPAWN_DELAY, Timer_Respawn, GetClientUserId(client));
+    if (IsFakeClient(client))
+    {
+        // A bot died: CS:S bots don't auto-respawn, so put it back quickly to
+        // keep a target on screen while the visitor is alive.
+        CreateTimer(RESPAWN_DELAY, Timer_RespawnBot, GetClientUserId(client));
+        return;
+    }
+
+    // The VISITOR died: reset the round so everything snaps back to a clean
+    // start. Every Nth death (sm_kiosk_rounds_per_reset) we instead reload the
+    // map entirely, to clear any accumulated server state on a long unattended
+    // run (the client stays connected through a changelevel).
+    g_iRoundsSinceReset++;
+    CreateTimer(RESET_DELAY, Timer_VisitorReset);
 }
 
-public Action Timer_Respawn(Handle timer, int userid)
+public Action Timer_RespawnBot(Handle timer, int userid)
 {
     int client = GetClientOfUserId(userid);
-    if (client <= 0 || !IsClientInGame(client))
+    if (client <= 0 || !IsClientInGame(client) || !IsFakeClient(client))
         return Plugin_Stop;
     if (IsPlayerAlive(client))
         return Plugin_Stop;
 
-    // Make sure nobody is stuck as a spectator (team 0/1).
     int team = GetClientTeam(client);
     if (team != CS_TEAM_T && team != CS_TEAM_CT)
         return Plugin_Stop;
 
     CS_RespawnPlayer(client);
+    return Plugin_Stop;
+}
+
+public Action Timer_VisitorReset(Handle timer)
+{
+    int per = g_cvRoundsPerReset.IntValue;
+    if (per > 0 && g_iRoundsSinceReset >= per)
+    {
+        // Periodic full reset: reload the current map. Recreates all entities
+        // and resets all game state without disconnecting the client.
+        g_iRoundsSinceReset = 0;
+        char map[64];
+        GetCurrentMap(map, sizeof(map));
+        PrintToChatAll("\x04[AIM STUDY]\x01 Periodic reset — reloading the map...");
+        ServerCommand("changelevel %s", map);
+    }
+    else
+    {
+        // Normal case: just restart the round (respawns the visitor + bots at
+        // spawn points; mp_freezetime is 0 so play resumes immediately).
+        ServerCommand("mp_restartgame 1");
+    }
     return Plugin_Stop;
 }
 
