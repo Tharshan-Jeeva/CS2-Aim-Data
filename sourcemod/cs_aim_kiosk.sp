@@ -155,6 +155,10 @@ public Action Timer_EquipVisitor(Handle timer, int userid)
         EquipPlayerWeapon(client, ak);
     }
 
+    // The visitor is the lone T, so give them the C4 (StripWeapons removed the
+    // one the game hands out). Goes in the bomb slot; the AK stays active.
+    GivePlayerItem(client, "weapon_c4");
+
     // Full armor + helmet every spawn.
     SetEntProp(client, Prop_Send, "m_ArmorValue", 100);
     SetEntProp(client, Prop_Send, "m_bHasHelmet", 1);
