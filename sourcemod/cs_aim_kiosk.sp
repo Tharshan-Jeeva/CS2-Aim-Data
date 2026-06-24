@@ -70,7 +70,9 @@ public void OnPluginStart()
     g_cvRoundsPerReset = CreateConVar("sm_kiosk_rounds_per_reset", "30",
         "Reload the map after this many visitor deaths/round-resets to clear accumulated state (0 = never)",
         FCVAR_NONE, true, 0.0, true, 1000.0);
-    g_cvAfkSeconds = CreateConVar("sm_kiosk_afk_seconds", "120",
+    // TEMPORARY: shortened to 15s for testing the AFK MOTD re-show. Set back to
+    // ~120 for the real exhibition (or change live with: sm_kiosk_afk_seconds 120).
+    g_cvAfkSeconds = CreateConVar("sm_kiosk_afk_seconds", "15",
         "Re-show the MOTD after a visitor has been idle this many seconds, so the next person sees it (0 = off)",
         FCVAR_NONE, true, 0.0, true, 3600.0);
 
