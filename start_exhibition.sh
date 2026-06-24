@@ -20,9 +20,12 @@ set -euo pipefail
 # ----------------------------------------------------------------------------
 MAP="de_dust2"
 SERVER_IP="127.0.0.1"        # single box: client connects to localhost
+SERVER_PORT=27015            # srcds game port (UDP)
 AUTO_LAUNCH_CLIENT=1         # 1 = also start + connect the game client
 CSS_APPID=240                # CS:Source Steam app id
 BOT_QUOTA=5
+CLIENT_WAIT_TIMEOUT=180      # max seconds to wait for the server to be joinable
+                             # before launching the client anyway
 
 # ----------------------------------------------------------------------------
 #  Paths
@@ -109,27 +112,27 @@ deploy_client_cfg() {
 #  3. Supervised CS:Source dedicated server (auto-restart on crash)
 # ----------------------------------------------------------------------------
 supervise_server() {
-    local nice_prefix=()
-    command -v nice >/dev/null 2>&1 && nice_prefix=(nice -n -5)
+    # IMPORTANT: srcds with `-console` HANGS at SteamAPI_Init when it has no
+    # controlling terminal (i.e. when backgrounded by a supervisor like this).
+    # `script` allocates a pseudo-TTY for it, which is what lets it finish Steam
+    # init and load the map. tmux/screen would also work but aren't installed
+    # here; `script` is part of util-linux and is always present.
+    if ! command -v script >/dev/null 2>&1; then
+        log "ERROR: 'script' (util-linux) not found; cannot give srcds a TTY. Install util-linux."
+        return 1
+    fi
+
+    # Single-line command run inside the pty. srcds_run self-cd's to its own dir,
+    # but we cd explicitly so relative paths (steam_appid.txt) resolve too.
+    local srv_cmd="cd '$INSTALL' && exec ./srcds_run -game cstrike -console -insecure \
+-tickrate 100 +sv_lan 1 +map '$MAP' +bot_quota $BOT_QUOTA \
++sv_maxcmdrate 128 +sv_maxupdaterate 128 +sv_mincmdrate 100 +sv_minupdaterate 100 \
++sv_maxrate 1000000 +sv_minrate 100000 +exec exhibition_server.cfg"
 
     while [ -f "$RUNFLAG" ]; do
-        echo "===== $(date '+%F %T')  srcds starting =====" >> "$LOGS/srcds.log"
-        # If `nice -n -5` is refused (no CAP_SYS_NICE), retry without it.
-        if ! "${nice_prefix[@]}" "$INSTALL/srcds_run" -game cstrike -console -insecure \
-                -tickrate 100 +sv_lan 1 +map "$MAP" +bot_quota "$BOT_QUOTA" \
-                +sv_maxcmdrate 128 +sv_maxupdaterate 128 \
-                +sv_mincmdrate 100 +sv_minupdaterate 100 \
-                +sv_maxrate 1000000 +sv_minrate 100000 \
-                +exec exhibition_server.cfg \
-                >> "$LOGS/srcds.log" 2>&1; then
-            "$INSTALL/srcds_run" -game cstrike -console -insecure \
-                -tickrate 100 +sv_lan 1 +map "$MAP" +bot_quota "$BOT_QUOTA" \
-                +sv_maxcmdrate 128 +sv_maxupdaterate 128 \
-                +sv_mincmdrate 100 +sv_minupdaterate 100 \
-                +sv_maxrate 1000000 +sv_minrate 100000 \
-                +exec exhibition_server.cfg \
-                >> "$LOGS/srcds.log" 2>&1 || true
-        fi
+        echo "===== $(date '+%F %T')  srcds starting (pty via script) =====" >> "$LOGS/srcds.log"
+        # -q quiet, -a append (keep the markers above), -f flush, -c run command.
+        script -q -a -f -c "$srv_cmd" "$LOGS/srcds.log" >/dev/null 2>&1 || true
         [ -f "$RUNFLAG" ] || break
         echo "===== $(date '+%F %T')  srcds exited; restarting in 3s =====" >> "$LOGS/srcds.log"
         sleep 3
@@ -143,10 +146,36 @@ client_running() {
     pgrep -f "hl2.*-game cstrike" >/dev/null 2>&1 || pgrep -x "hl2_linux" >/dev/null 2>&1
 }
 
+# Readiness probe. An empty CS:Source server hibernates and won't answer an A2S
+# query, so we can't use a network ping. Instead we wait for srcds to print its
+# boot-complete markers (Steam ID assigned / tickrate set / VAC line), which
+# only appear once Steam init and the map load have finished.
+server_ready() {
+    pgrep -x srcds_linux >/dev/null 2>&1 || return 1
+    tail -n 120 "$LOGS/srcds.log" 2>/dev/null \
+        | grep -qE "Assigned anonymous gameserver Steam ID|VAC secure mode disabled|setting tickrate to"
+}
+
 supervise_client() {
     command -v steam >/dev/null 2>&1 || { log "WARN: steam not on PATH; cannot auto-launch client."; return; }
-    # Give the server a few seconds to be joinable first.
-    sleep 8
+
+    # Wait until the server actually ANSWERS (not just until the port is bound).
+    # srcds can take 30-90s to finish Steam init + load the map; launching the
+    # client before then leaves it stuck at the menu ("Connection failed after
+    # 4 retries"), which is exactly what happens with a naive fixed sleep.
+    local waited=0
+    while [ -f "$RUNFLAG" ] && ! server_ready; do
+        sleep 3; waited=$((waited + 3))
+        if [ "$waited" -ge "$CLIENT_WAIT_TIMEOUT" ]; then
+            log "WARN: server still not answering after ${waited}s. Launching the client"
+            log "      anyway; if it sits at the menu, the server hasn't finished booting —"
+            log "      check logs/srcds.log, then reconnect with: connect $SERVER_IP"
+            break
+        fi
+    done
+    [ -f "$RUNFLAG" ] || return
+    server_ready && log "Server is answering on $SERVER_IP:$SERVER_PORT after ~${waited}s; launching client."
+
     while [ -f "$RUNFLAG" ]; do
         if ! client_running; then
             echo "===== $(date '+%F %T')  launching CS:S client =====" >> "$LOGS/client.log"

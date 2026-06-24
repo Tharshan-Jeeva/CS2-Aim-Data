@@ -126,6 +126,23 @@ Work top to bottom; stop as soon as one fixes it.
 6. **Nuclear option:** `./stop_exhibition.sh --all && ./start_exhibition.sh`.
    The whole stack is stateless; a clean relaunch fixes almost everything.
 
+### Why the launcher runs srcds under `script`
+
+srcds with `-console` **hangs at `SteamAPI_Init` when it has no controlling
+terminal** (the symptom is the boot log stopping at
+`[S_API FAIL] ... SteamUtils010 before SteamAPI_Init succeeded` and never
+loading the map). Because the supervisor backgrounds the server, the launch
+script runs it inside a `script` pseudo-TTY (util-linux), which is what lets it
+finish booting. If you ever start srcds by hand in the background, wrap it the
+same way or it will stall. The launcher waits for the boot-complete markers in
+`logs/srcds.log` before launching the client.
+
+An **empty** CS:Source server hibernates (you'll see `Server is hibernating`)
+and the 5 CT bots don't spawn until the first client connects — there is no
+`sv_hibernate_when_empty` cvar in CS:S. This is expected: the launcher
+auto-connects the game client on boot, which wakes the server and spawns the
+bots before any visitor arrives.
+
 ---
 
 ## Files in this mode
