@@ -1,71 +1,156 @@
-# CS:Source Aim-Trajectory Data Collection And Analysis Pipeline
+# CS:Source Aim-Trajectory Data Collection and Analysis Pipeline
 
-BSc Critical Project 6: transformer-based classification of human, smooth-assist,
-and humanised-assist aim trajectories from Counter-Strike: Source telemetry.
+BSc Critical Project 6: a pipeline for collecting and analysing aim trajectories from a local **Counter-Strike: Source** server.
 
-The final dissertation analysis uses participant-held-out evaluation on
-AK-47-only pre-fire windows. Questionnaire data is processed separately and is
-not used as model input.
+The repository contains the SourceMod plugins, Python telemetry/capture code, analysis pipeline, server configuration, and setup documentation used for the project.
+
+## Overview
+
+The project uses a local CS:Source dedicated server to collect player telemetry at a target rate of 100 Hz. SourceMod plugins provide the telemetry and aim-assist implementations, while the Python pipeline receives and stores the resulting event data.
+
+The analysis pipeline preprocesses recorded sessions into fixed-length trajectory windows and supports both classical baseline models and a PyTorch Transformer model.
+
+## Repository Structure
+
+```text
+CS2-Aim-Data/
+├── analysis/
+│   ├── audit_tickrate.py
+│   ├── baselines.py
+│   ├── configs/
+│   ├── dataset.py
+│   ├── evaluate_transformer.py
+│   ├── features.py
+│   ├── labels.py
+│   ├── make_splits.py
+│   ├── plot_trajectories.py
+│   ├── preprocess_sequences.py
+│   ├── run_baselines.py
+│   ├── sequence_dataset.py
+│   ├── train_transformer.py
+│   ├── transformer_model.py
+│   └── __init__.py
+│
+├── capture/
+│   ├── bot_aim_generator.py
+│   ├── bot_profiles/
+│   ├── session_orchestrator.py
+│   ├── telemetry_server.py
+│   └── __init__.py
+│
+├── server_config/
+│   └── server.cfg
+│
+├── sourcemod/
+│   ├── Tickrate_Enabler.so
+│   ├── Tickrate_Enabler.vdf
+│   ├── cs_aim_live_controller.sp
+│   ├── cs_aim_live_controller.smx
+│   ├── cs_aim_override.sp
+│   ├── cs_aim_override.smx
+│   ├── cs_aim_telemetry.sp
+│   ├── cs_aim_telemetry.smx
+│   └── tickrate_enabler_src/
+│
+├── start_css_server.sh
+├── requirements.txt
+├── SETUP.md
+└── README.md
+```
+
+The repository does **not** include the CS:Source server installation or participant session data. These are created locally during setup and data collection.
 
 ## Architecture
 
+```text
+Counter-Strike: Source dedicated server
+        │
+        ├── Tickrate Enabler
+        │       └── enables 100 Hz server operation
+        │
+        ├── SourceMod telemetry plugin
+        │       └── sends telemetry to Python
+        │
+        └── SourceMod aim controller
+                └── provides the native aim-assist conditions
+
+Python capture pipeline
+        │
+        ├── telemetry_server.py
+        │       └── receives and stores telemetry
+        │
+        ├── session_orchestrator.py
+        │       └── manages capture sessions and labels
+        │
+        └── bot_aim_generator.py
+                └── legacy Python-TCP aim path
+
+Analysis pipeline
+        │
+        ├── audit_tickrate.py
+        ├── plot_trajectories.py
+        ├── preprocess_sequences.py
+        ├── run_baselines.py
+        └── train/evaluate Transformer
 ```
-CS:Source dedicated server (srcds_linux + Tickrate_Enabler → 100 Hz)
-    ├── Tickrate_Enabler.so              Patches the engine 66.7 Hz cap
-    ├── cs_aim_telemetry.smx             HTTP POST every tick → Flask :3000
-    └── cs_aim_live_controller.smx       Primary aimbot — runs in-process
-                                         on OnPlayerRunCmd, zero round-trip
 
-Python pipeline (capture/)
-    ├── telemetry_server.py              Flask receiver → sort/dedupe → JSON
-    ├── session_orchestrator.py          Session runner (labels, console hints)
-    └── bot_profiles/                    YAML parameter sets (kept for the
-                                         dissertation — documents the bot
-                                         design space and the legacy
-                                         Python-TCP aim path)
+## Aim Conditions
 
-Data
-    └── sessions/                        Per-session events JSON
+The session orchestrator supports the following SourceMod-native conditions:
 
-Analysis (analysis/)
-    ├── audit_tickrate.py                Capture-quality gate (--active-only)
-    ├── plot_trajectories.py             Visual inspection (--fire-window)
-    ├── features.py                      33-dim handcrafted feature extractor
-    ├── preprocess_sequences.py          Events JSON → model-ready windows
-    ├── run_baselines.py                 Classical baseline models
-    ├── train_transformer.py             PyTorch Transformer Encoder training
-    ├── evaluate_transformer.py          Metrics and plots from checkpoints
-    ├── questionnaire_summary.py         Subjective questionnaire summaries
-    └── labels.py                        Filename → SessionMeta parser
+| Label | Native mode |
+|---|---|
+| `human` | Assist disabled |
+| `sm_native_raw` | `raw` |
+| `sm_native_smooth` | `smooth` |
+| `sm_native_humanised_med` | `humanised` |
+| `sm_native_humanised_high` | `humanised_high` |
+
+The repository also contains a **legacy Python-TCP aim path** with the following labels:
+
+```text
+bot_raw
+bot_smooth
+bot_humanised_low
+bot_humanised_med
+bot_humanised_high
 ```
 
-The **SourceMod-native controller** (`cs_aim_live_controller.smx`) is the active
-aimbot for the study. It runs inside the server's `OnPlayerRunCmd` hook, so the
-aim correction lands on the same tick as the position read — no Python
-round-trip latency. The legacy Python TCP loop (`cs_aim_override.smx` +
-`bot_aim_generator.py`) is kept in the repo for reference and parameter
-documentation but is **not** the path used for participant recordings.
+These use the YAML profiles in `capture/bot_profiles/` and are retained in the repository as the earlier aim-control implementation.
 
-## Fresh-Machine Setup
+The SourceMod-native controller is implemented in:
 
-The canonical replication guide is **[SETUP.md](SETUP.md)**. It is structured
-as numbered steps with a **Verify** block after each one — if your output
-doesn't match the expected output, stop and fix it before continuing.
+```text
+sourcemod/cs_aim_live_controller.sp
+```
 
-A clean run produces sessions that pass:
+The legacy Python-TCP implementation is provided by:
+
+```text
+sourcemod/cs_aim_override.sp
+capture/bot_aim_generator.py
+```
+
+## Data Collection
+
+`capture/session_orchestrator.py` starts the local telemetry receiver and manages individual capture sessions.
+
+For a standard session:
 
 ```bash
-python -m analysis.audit_tickrate --sessions sessions --active-only
+source .venv/bin/activate
+python -m capture.session_orchestrator
 ```
 
-with no flags (mean ≥ 95 Hz, zero duplicates, zero non-monotonic).
+The orchestrator supports participant IDs, condition labels, session duration, automatic stopping, and session manifests.
 
-For analysis-only replication on a machine that already has the completed
-`sessions/` folder, the CS:Source server is not required. Use the steps below.
+Captured session data is written to a local `sessions/` directory when the pipeline is run. This directory is not part of the repository because participant data is not included in the source distribution.
 
-## Analysis-Only Replication
+## Analysis
 
-### 1. Create the Python environment
+### Environment
+
+Create the Python environment with:
 
 ```bash
 python -m venv .venv
@@ -73,210 +158,139 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-If you want GPU training, install a PyTorch build that matches your CUDA driver.
-The scripts automatically choose CUDA when available and fall back to CPU unless
-`--require-cuda` is supplied.
+### Audit telemetry
 
-Verify:
+Use the tickrate audit to check captured sessions:
 
 ```bash
-.venv/bin/python -c "import torch; print(torch.__version__); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'No CUDA')"
+python -m analysis.audit_tickrate --sessions sessions --active-only
 ```
 
-### 2. Required local data
+### Inspect trajectories
 
-The analysis expects the final participant folders under:
+Trajectory plots can be generated with:
+
+```bash
+python -m analysis.plot_trajectories --sessions sessions
+```
+
+See the script's `--help` output for the available plotting options.
+
+### Preprocess sequences
+
+The preprocessing pipeline converts recorded event JSON files into model-ready sequence data.
+
+The exact preprocessing arguments used for a particular experiment should be kept with the corresponding experiment configuration and results.
+
+### Classical baselines
+
+Classical baseline models can be run using:
+
+```bash
+python -m analysis.run_baselines --help
+```
+
+The baseline implementation is contained in:
 
 ```text
-sessions/P01 ... sessions/P12
+analysis/baselines.py
 ```
 
-Each participant folder should contain its telemetry `*_events.json`, manifest
-JSONs, demographics JSON, and questionnaire JSONs. Raw `sessions/` data is not
-modified by the scripts and may be ignored by git for privacy/size reasons.
+### Transformer
 
-### 3. Preprocess AK-47 sequence windows
+The project includes a PyTorch Transformer implementation for sequence classification.
+
+Training:
 
 ```bash
-.venv/bin/python -m analysis.preprocess_sequences \
-  --sessions-dir sessions \
-  --out-dir analysis/processed \
-  --results-dir analysis/results \
-  --window-start -2.0 \
-  --window-end 0.0 \
-  --seq-len 200 \
-  --feature-set aim_plus_movement \
-  --weapon ak47 \
-  --config-name prefire_2s_ak47_aim_movement
+python -m analysis.train_transformer --help
 ```
 
-Expected main outputs:
+Evaluation of an existing run:
+
+```bash
+python -m analysis.evaluate_transformer --help
+```
+
+The Transformer configuration is also provided in:
 
 ```text
-analysis/processed/windows_prefire_2s_ak47_aim_movement.npz
-analysis/processed/windows_prefire_2s_ak47_aim_movement_metadata.csv
-analysis/processed/preprocess_report_prefire_2s_ak47_aim_movement.json
-analysis/results/schema_summary.json
-analysis/results/session_inventory.csv
-analysis/results/sensitivity_report.csv
-analysis/results/rejected_windows.csv
-analysis/results/excluded_sessions.csv
+analysis/configs/transformer_default.json
 ```
 
-### 4. Train classical baselines
+## Server Setup
 
-```bash
-.venv/bin/python -m analysis.run_baselines \
-  --data analysis/processed/windows_prefire_2s_ak47_aim_movement.npz \
-  --metadata analysis/processed/windows_prefire_2s_ak47_aim_movement_metadata.csv \
-  --task binary_smooth \
-  --out-dir analysis/results/Baselines+Binaries/ak47_baselines_binary_smooth
-```
-
-Repeat with `binary_humanised`, `binary_all`, and `multiclass`, changing the
-output directory name to match the task.
-
-### 5. Train the Transformer
-
-```bash
-.venv/bin/python -m analysis.train_transformer \
-  --data analysis/processed/windows_prefire_2s_ak47_aim_movement.npz \
-  --metadata analysis/processed/windows_prefire_2s_ak47_aim_movement_metadata.csv \
-  --task binary_smooth \
-  --splitter lopo \
-  --epochs 60 \
-  --batch-size 64 \
-  --lr 3e-4 \
-  --require-cuda \
-  --amp \
-  --out-dir analysis/results/Baselines+Binaries/ak47_transformer_binary_smooth
-```
-
-Repeat with `binary_humanised`, `binary_all`, and `multiclass`, changing the
-output directory name to match the task. Remove `--require-cuda` if you need CPU
-fallback.
-
-Each Transformer run writes:
+The repository includes the files required to configure the CS:Source server:
 
 ```text
-metrics.json
-per_fold_metrics.csv
-fold_predictions.csv
-fold_splits.json
-confusion_matrix.png
-classification_report.txt
-training_curves.png
-config_used.json
-checkpoints/
+server_config/server.cfg
+sourcemod/
+start_css_server.sh
 ```
 
-To regenerate evaluation artefacts for a completed Transformer run:
+The full fresh-machine installation and replication procedure is documented in **[SETUP.md](SETUP.md)**.
 
-```bash
-.venv/bin/python -m analysis.evaluate_transformer \
-  analysis/results/Baselines+Binaries/ak47_transformer_binary_smooth
-```
+The setup guide covers:
 
-Repeat for the other Transformer output directories as needed.
+- CS:Source dedicated server installation
+- Metamod:Source and SourceMod
+- SteamWorks
+- Tickrate Enabler
+- SourceMod plugin deployment
+- Server and client configuration
+- Running a capture session
+- Auditing captured telemetry
+- Inspecting trajectories
+- Rebuilding Tickrate Enabler
+- The legacy Python-TCP aim path
 
-### 6. Process questionnaires
+## Tickrate Enabler
 
-```bash
-.venv/bin/python -m analysis.questionnaire_summary \
-  --sessions-dir sessions \
-  --out-dir analysis/results/questionnaires
-```
+`Tickrate_Enabler.so` and its VDF file are included in the repository.
 
-Expected outputs include:
+The source used to build the Tickrate Enabler is located in:
 
 ```text
-analysis/results/questionnaires/questionnaire_summary.csv
-analysis/results/questionnaires/questionnaire_descriptives.csv
-analysis/results/questionnaires/questionnaire_stats.json
-analysis/results/questionnaires/questionnaire_condition_summary.png
-analysis/results/questionnaires/questionnaire_igeq_summary.png
+sourcemod/tickrate_enabler_src/
 ```
 
-### 7. Report build
+See `sourcemod/tickrate_enabler_src/BUILD.md` for build information.
 
-The LaTeX report source is in:
+## Requirements
+
+Python dependencies are listed in:
 
 ```text
-UAL_Undergrad_Thesis_Template__1____1_/
+requirements.txt
 ```
 
-Build it with:
+The server itself requires additional CS:Source, Metamod:Source, SourceMod, and SteamWorks components. Their installation is described in `SETUP.md`.
+
+## Reproduction
+
+For a complete fresh-machine setup, follow:
+
+```text
+SETUP.md
+```
+
+For an already configured environment, the main components are:
 
 ```bash
-cd UAL_Undergrad_Thesis_Template__1____1_
-latexmk -pdf -interaction=nonstopmode thesis.tex
-```
-
-This step requires a local LaTeX distribution with `latexmk` installed.
-
-The generated PDF is:
-
-```text
-UAL_Undergrad_Thesis_Template__1____1_/thesis.pdf
-```
-
-## Current Dissertation Result Locations
-
-```text
-analysis/results/Baselines+Binaries/ak47_baselines_binary_smooth/
-analysis/results/Baselines+Binaries/ak47_baselines_binary_humanised/
-analysis/results/Baselines+Binaries/ak47_baselines_binary_all/
-analysis/results/Baselines+Binaries/ak47_baselines_multiclass/
-analysis/results/Baselines+Binaries/ak47_transformer_binary_smooth/
-analysis/results/Baselines+Binaries/ak47_transformer_binary_humanised/
-analysis/results/Baselines+Binaries/ak47_transformer_binary_all/
-analysis/results/Baselines+Binaries/ak47_transformer_multiclass/
-analysis/results/questionnaires/
-```
-
-The detailed training notes are in
-**[docs/transformer-training-pipeline.md](docs/transformer-training-pipeline.md)**.
-
-## Quick Start (already set up)
-
-```bash
-# 1. Start server
 ./start_css_server.sh
+```
 
-# 2. Start telemetry receiver
+and, in another terminal:
+
+```bash
 source .venv/bin/activate
 python -m capture.session_orchestrator
-
-# 3. In-game console (per round)
-sm_nativeaim_me                          // register the participant
-sm_nativeaim_mode humanised_high         // pick a mode
-sm_nativeaim_active 0                    // bind to MOUSE4 (see SETUP.md §8)
 ```
 
-## Conditions
+The resulting session data can then be audited, visualised, preprocessed, and used by the baseline and Transformer analysis scripts.
 
-| Label                          | Native mode       | Notes                                                  |
-|--------------------------------|-------------------|--------------------------------------------------------|
-| `human`                        | (assist off)      | Subject plays manually, no assist active               |
-| `sm_native_raw`                | raw               | Zero-latency instant snap                              |
-| `sm_native_smooth`             | smooth            | Distance-scaled gain, linear settle                    |
-| `sm_native_humanised_med`      | humanised         | Reaction delay + light jitter                          |
-| `sm_native_humanised_high`     | humanised\_high   | Distance-scaled jitter, drift, stochastic overshoot    |
+## Data and Results
 
-Legacy Python-TCP labels (`bot_raw`, `bot_smooth`, `bot_humanised_*`) remain
-recognised by `session_orchestrator.py` but are not the default. Their
-parameters in `capture/bot_profiles/` document the bot design space used for
-the dissertation discussion.
+Participant session data, generated analysis outputs, model checkpoints, figures, and other experiment artefacts are **not included in this repository**.
 
-## Repository Structure
-
-```
-sourcemod/              SourceMod plugins (.sp + .smx) and Tickrate_Enabler
-capture/                Python telemetry receiver, orchestrator, bot profiles
-analysis/               Audit + plot tooling (audit_tickrate, plot_trajectories)
-docs/                   Training and report documentation
-cssource_server/        Server install (gitignored — install via SteamCMD)
-start_css_server.sh     Server launch script (forces 100 Hz, restricts bots)
-requirements.txt        Python dependencies
-SETUP.md                Full replication guide
-```
+They must be generated locally from the capture and analysis pipelines.
